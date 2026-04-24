@@ -1,51 +1,40 @@
 use crate::engine::board::{BitBoard, Board};
-use crate::engine::mv::{Move, Movelist};
+use crate::engine::mv::Movelist;
 use crate::engine::piece::Piece;
 use crate::engine::square::Square;
 
 use super::extract_pieces_from_bitboard;
-use super::{NOT_A_FILE, NOT_AB_FILE, NOT_GH_FILE, NOT_H_FILE};
+use super::{add_capture_moves, add_quiet_moves, NOT_A_FILE, NOT_AB_FILE, NOT_GH_FILE, NOT_H_FILE};
 
 pub(super) fn gen_knight_moves(board: &Board, movelist: &mut Movelist) {
     let color = board.get_current_player_color();
     let knights = board.get_bitboard_for_piece(Piece::Knight, color);
     for pos in extract_pieces_from_bitboard(knights) {
-        knight_moves(pos, board, movelist);
-        knight_attacks(pos, board, movelist);
+        let targets = knight_targets(pos.to_bitboard());
+        add_quiet_moves(pos, targets, board, movelist);
+        add_capture_moves(pos, targets, board, movelist);
+    }
+}
+
+pub(super) fn gen_knight_attacks(board: &Board, movelist: &mut Movelist) {
+    let color = board.get_current_player_color();
+    let knights = board.get_bitboard_for_piece(Piece::Knight, color);
+    for pos in extract_pieces_from_bitboard(knights) {
+        let targets = knight_targets(pos.to_bitboard());
+        add_capture_moves(pos, targets, board, movelist);
     }
 }
 
 fn knight_targets(pos: BitBoard) -> BitBoard {
-    let mut target = (pos << 17) & NOT_A_FILE; // Up 2, Right 1
-    target |= (pos << 15) & NOT_H_FILE; // Up 2, Left 1
-    target |= (pos << 10) & NOT_AB_FILE; // Up 1, Right 2
-    target |= (pos << 6) & NOT_GH_FILE; // Up 1, Left 2
-    target |= (pos >> 17) & NOT_H_FILE; // Down 2, Left 1
-    target |= (pos >> 15) & NOT_A_FILE; // Down 2, Right 1
-    target |= (pos >> 10) & NOT_GH_FILE; // Down 1, Left 2
-    target |= (pos >> 6) & NOT_AB_FILE; // Down 1, Right 2
-    return target;
-}
-
-fn knight_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
-    let pos_bb = pos.to_bitboard();
-    let occupied = board.get_occupied_squares();
-    let mut targets = knight_targets(pos_bb);
-
-    targets &= !occupied;
-    for dest in extract_pieces_from_bitboard(targets) {
-        movelist.add_move(Move::quiet(pos, dest));
-    }
-}
-
-fn knight_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
-    let pos_bb = pos.to_bitboard();
-    let targets = knight_targets(pos_bb);
-    let attacks = targets & board.get_occupied_squares_for_color(board.get_opponent_color());
-
-    for dest in extract_pieces_from_bitboard(attacks) {
-        movelist.add_move(Move::capture(pos, dest));
-    }
+    let mut target = (pos << 17) & NOT_A_FILE;
+    target |= (pos << 15) & NOT_H_FILE;
+    target |= (pos << 10) & NOT_AB_FILE;
+    target |= (pos << 6) & NOT_GH_FILE;
+    target |= (pos >> 17) & NOT_H_FILE;
+    target |= (pos >> 15) & NOT_A_FILE;
+    target |= (pos >> 10) & NOT_GH_FILE;
+    target |= (pos >> 6) & NOT_AB_FILE;
+    target
 }
 
 #[cfg(test)]

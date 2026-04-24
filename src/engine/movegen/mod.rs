@@ -1,6 +1,6 @@
 use crate::engine::board::BitBoard;
 use crate::engine::board::Board;
-use crate::engine::mv::Movelist;
+use crate::engine::mv::{Move, Movelist};
 use crate::engine::square::Square;
 
 mod pawn;
@@ -21,14 +21,34 @@ const NOT_H_FILE: BitBoard = 0x7F7F7F7F7F7F7F7F;
 const NOT_GH_FILE: BitBoard = 0x3F3F3F3F3F3F3F3F;
 const NOT_AB_FILE: BitBoard = 0xFCFCFCFCFCFCFCFC;
 
-fn extract_pieces_from_bitboard(mut bitboard: u64) -> Vec<Square> {
-    let mut pieces = Vec::new();
-    while bitboard != 0 {
-        let index = bitboard.trailing_zeros() as usize;
-        pieces.push(Square(index as u8));
-        bitboard &= bitboard - 1;
+struct BitBoardIter(u64);
+
+impl Iterator for BitBoardIter {
+    type Item = Square;
+    fn next(&mut self) -> Option<Square> {
+        if self.0 == 0 { return None; }
+        let index = self.0.trailing_zeros() as u8;
+        self.0 &= self.0 - 1;
+        Some(Square(index))
     }
-    pieces
+}
+
+fn extract_pieces_from_bitboard(bitboard: u64) -> BitBoardIter {
+    BitBoardIter(bitboard)
+}
+
+pub(super) fn add_quiet_moves(from: Square, targets: BitBoard, board: &Board, movelist: &mut Movelist) {
+    let quiets = targets & !board.get_occupied_squares();
+    for dest in extract_pieces_from_bitboard(quiets) {
+        movelist.add_move(Move::quiet(from, dest));
+    }
+}
+
+pub(super) fn add_capture_moves(from: Square, targets: BitBoard, board: &Board, movelist: &mut Movelist) {
+    let captures = targets & board.get_occupied_squares_for_color(board.get_opponent_color());
+    for dest in extract_pieces_from_bitboard(captures) {
+        movelist.add_move(Move::capture(from, dest));
+    }
 }
 
 pub fn gen_moves(board: &Board) -> Movelist {
@@ -37,4 +57,8 @@ pub fn gen_moves(board: &Board) -> Movelist {
     gen_knight_moves(board, &mut movelist);
     gen_king_moves(board, &mut movelist);
     movelist
+}
+
+pub fn gen_attacks(board: &Board) -> BitBoard {
+    0
 }

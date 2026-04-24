@@ -15,6 +15,14 @@ pub(super) fn gen_pawn_moves(board: &Board, movelist: &mut Movelist) {
     }
 }
 
+pub(super) fn gen_pawn_attacks(board: &Board, movelist: &mut Movelist) {
+    let color = board.get_current_player_color();
+    let pawns = board.get_bitboard_for_piece(Piece::Pawn, color);
+    for pos in extract_pieces_from_bitboard(pawns) {
+        pawn_attacks(pos, board, movelist);
+    }
+}
+
 fn add_pawn_targets(
     from: Square,
     targets: BitBoard,
