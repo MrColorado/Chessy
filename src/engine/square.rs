@@ -132,7 +132,7 @@ impl Square {
 
     // The raw index, useful when indexing into arrays.
     #[inline]
-    pub fn index(self) -> usize {
+    pub fn to_index(self) -> usize {
         self.0 as usize
     }
 }
@@ -151,12 +151,12 @@ mod tests {
 
     #[test]
     fn a1_is_index_zero() {
-        assert_eq!(Square::A1.index(), 0);
+        assert_eq!(Square::A1.to_index(), 0);
     }
 
     #[test]
     fn h8_is_index_63() {
-        assert_eq!(Square::H8.index(), 63);
+        assert_eq!(Square::H8.to_index(), 63);
     }
 
     #[test]
