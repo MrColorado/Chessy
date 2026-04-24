@@ -4,21 +4,10 @@ use crate::engine::piece::{Color, Piece};
 use crate::engine::square::Square;
 
 use super::extract_pieces_from_bitboard;
-
-const RANK_8: BitBoard = 0xFF00000000000000;
-const RANK_7: BitBoard = 0x00FF000000000000;
-const RANK_2: BitBoard = 0x000000000000FF00;
-const RANK_1: BitBoard = 0x00000000000000FF;
-
-const NOT_FILE_A: BitBoard = 0xFEFEFEFEFEFEFEFE;
-const NOT_FILE_H: BitBoard = 0x7F7F7F7F7F7F7F7F;
+use super::{NOT_A_FILE, NOT_H_FILE, RANK_1, RANK_2, RANK_7, RANK_8};
 
 pub(super) fn gen_pawn_moves(board: &Board, movelist: &mut Movelist) {
-    let color = if board.get_white_to_move() {
-        Color::White
-    } else {
-        Color::Black
-    };
+    let color = board.get_current_player_color();
     let pawns = board.get_bitboard_for_piece(Piece::Pawn, color);
     for pos in extract_pieces_from_bitboard(pawns) {
         pawn_moves(pos, board, movelist);
@@ -84,8 +73,8 @@ fn pawn_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
     let pos_bb = pos.to_bitboard();
 
     if board.get_white_to_move() {
-        let left_attack = (pos_bb & NOT_FILE_A) << 7;
-        let right_attack = (pos_bb & NOT_FILE_H) << 9;
+        let left_attack = (pos_bb & NOT_A_FILE) << 7;
+        let right_attack = (pos_bb & NOT_H_FILE) << 9;
         let attacks =
             (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::Black);
         add_pawn_targets(pos, attacks, RANK_8, movelist);
@@ -95,8 +84,8 @@ fn pawn_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
             }
         }
     } else {
-        let left_attack = (pos_bb & NOT_FILE_A) >> 9;
-        let right_attack = (pos_bb & NOT_FILE_H) >> 7;
+        let left_attack = (pos_bb & NOT_A_FILE) >> 9;
+        let right_attack = (pos_bb & NOT_H_FILE) >> 7;
         let attacks =
             (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::White);
         add_pawn_targets(pos, attacks, RANK_1, movelist);

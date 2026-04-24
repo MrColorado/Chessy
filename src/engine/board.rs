@@ -129,6 +129,22 @@ impl Board {
         Ok(board)
     }
 
+    pub fn get_current_player_color(&self) -> Color {
+        if self.white_to_move {
+            Color::White
+        } else {
+            Color::Black
+        }
+    }
+
+    pub fn get_opponent_color(&self) -> Color {
+        if self.white_to_move {
+            Color::Black
+        } else {
+            Color::White
+        }
+    }
+
     pub fn get_white_to_move(&self) -> bool {
         self.white_to_move
     }
