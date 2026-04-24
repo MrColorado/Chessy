@@ -5,9 +5,11 @@ use crate::engine::square::Square;
 
 mod pawn;
 mod knight;
+mod king;
 
 use pawn::gen_pawn_moves;
 use knight::gen_knight_moves;
+use king::gen_king_moves;
 
 const RANK_8: BitBoard = 0xFF00000000000000;
 const RANK_7: BitBoard = 0x00FF000000000000;
@@ -33,5 +35,6 @@ pub fn gen_moves(board: &Board) -> Movelist {
     let mut movelist = Movelist::new();
     gen_pawn_moves(board, &mut movelist);
     gen_knight_moves(board, &mut movelist);
+    gen_king_moves(board, &mut movelist);
     movelist
 }

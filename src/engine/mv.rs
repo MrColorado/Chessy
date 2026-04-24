@@ -1,21 +1,76 @@
 use crate::engine::square::Square;
-use crate::engine::piece::Piece;
+use crate::engine::piece::{Color, Piece};
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum MoveKind {
+    #[default]
+    Quiet,
+    Capture,
+    KingsideCastle,
+    QueensideCastle,
+    EnPassant,
+    Promotion(Piece),
+    PromotionCapture(Piece),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Move {
     from: Square,
     to: Square,
-    promotion: Option<Piece>,
+    kind: MoveKind,
+}
+
+impl Default for Move {
+    fn default() -> Self {
+        Move { from: Square::A1, to: Square::A1, kind: MoveKind::Quiet }
+    }
 }
 
 impl Move {
-    pub fn new(from: Square, to: Square, promotion: Option<Piece>) -> Move {
-        Move { from, to, promotion }
+    pub fn quiet(from: Square, to: Square) -> Move {
+        Move { from, to, kind: MoveKind::Quiet }
+    }
+
+    pub fn capture(from: Square, to: Square) -> Move {
+        Move { from, to, kind: MoveKind::Capture }
+    }
+
+    pub fn promote(from: Square, to: Square, piece: Piece) -> Move {
+        Move { from, to, kind: MoveKind::Promotion(piece) }
+    }
+
+    pub fn promote_capture(from: Square, to: Square, piece: Piece) -> Move {
+        Move { from, to, kind: MoveKind::PromotionCapture(piece) }
+    }
+
+    pub fn en_passant(from: Square, to: Square) -> Move {
+        Move { from, to, kind: MoveKind::EnPassant }
+    }
+
+    pub fn kingside_castle(color: Color) -> Move {
+        match color {
+            Color::White => Move { from: Square::E1, to: Square::G1, kind: MoveKind::KingsideCastle },
+            Color::Black => Move { from: Square::E8, to: Square::G8, kind: MoveKind::KingsideCastle },
+        }
+    }
+
+    pub fn queenside_castle(color: Color) -> Move {
+        match color {
+            Color::White => Move { from: Square::E1, to: Square::C1, kind: MoveKind::QueensideCastle },
+            Color::Black => Move { from: Square::E8, to: Square::C8, kind: MoveKind::QueensideCastle },
+        }
     }
 
     pub fn from(&self) -> Square { self.from }
     pub fn to(&self) -> Square { self.to }
-    pub fn promotion(&self) -> Option<Piece> { self.promotion }
+    pub fn kind(&self) -> MoveKind { self.kind }
+
+    pub fn promotion(&self) -> Option<Piece> {
+        match self.kind {
+            MoveKind::Promotion(p) | MoveKind::PromotionCapture(p) => Some(p),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -27,7 +82,7 @@ pub struct Movelist {
 impl Movelist {
     pub fn new() -> Movelist {
         Movelist {
-            moves: [Move::new(Square::A1, Square::A1, None); 256],
+            moves: [Move::default(); 256],
             count: 0,
         }
     }

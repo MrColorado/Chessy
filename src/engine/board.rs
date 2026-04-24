@@ -12,6 +12,20 @@ impl CastlingRights {
     pub const WHITE_QUEENSIDE: u8 = 0b0010;
     pub const BLACK_KINGSIDE:  u8 = 0b0100;
     pub const BLACK_QUEENSIDE: u8 = 0b1000;
+
+    pub fn can_castle_kingside(&self, color: Color) -> bool {
+        match color {
+            Color::White => self.0 & CastlingRights::WHITE_KINGSIDE != 0,
+            Color::Black => self.0 & CastlingRights::BLACK_KINGSIDE != 0,
+        }
+    }
+
+    pub fn can_castle_queenside(&self, color: Color) -> bool {
+        match color {
+            Color::White => self.0 & CastlingRights::WHITE_QUEENSIDE != 0,
+            Color::Black => self.0 & CastlingRights::BLACK_QUEENSIDE != 0,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -216,6 +230,28 @@ impl Board {
         if self.black_kings & bit != 0 { return Some((Piece::King, Color::Black)); }
 
         None
+    }
+
+    pub fn can_castle_kingside(&self, color: Color) -> bool {
+        if !self.castling_rights.can_castle_kingside(color) {
+            return false;
+        }
+        let empty_mask = match color {
+            Color::White => Square::F1.to_bitboard() | Square::G1.to_bitboard(),
+            Color::Black => Square::F8.to_bitboard() | Square::G8.to_bitboard(),
+        };
+        self.get_occupied_squares() & empty_mask == 0
+    }
+
+    pub fn can_castle_queenside(&self, color: Color) -> bool {
+        if !self.castling_rights.can_castle_queenside(color) {
+            return false;
+        }
+        let empty_mask = match color {
+            Color::White => Square::B1.to_bitboard() | Square::C1.to_bitboard() | Square::D1.to_bitboard(),
+            Color::Black => Square::B8.to_bitboard() | Square::C8.to_bitboard() | Square::D8.to_bitboard(),
+        };
+        self.get_occupied_squares() & empty_mask == 0
     }
 
     pub fn make_move(&mut self, _mv: Move) {

@@ -19,15 +19,23 @@ fn add_pawn_targets(
     from: Square,
     targets: BitBoard,
     promotion_rank: BitBoard,
+    is_capture: bool,
     movelist: &mut Movelist,
 ) {
     for dest in extract_pieces_from_bitboard(targets) {
         if dest.to_bitboard() & promotion_rank != 0 {
             for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
-                movelist.add_move(Move::new(from, dest, Some(piece)));
+                let mv = if is_capture {
+                    Move::promote_capture(from, dest, piece)
+                } else {
+                    Move::promote(from, dest, piece)
+                };
+                movelist.add_move(mv);
             }
+        } else if is_capture {
+            movelist.add_move(Move::capture(from, dest));
         } else {
-            movelist.add_move(Move::new(from, dest, None));
+            movelist.add_move(Move::quiet(from, dest));
         }
     }
 }
@@ -39,14 +47,13 @@ fn pawn_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
     if board.get_white_to_move() {
         let dest = pos_bb << 8;
         if dest & occupied == 0 {
-            add_pawn_targets(pos, dest, RANK_8, movelist);
+            add_pawn_targets(pos, dest, RANK_8, false, movelist);
             if pos_bb & RANK_2 != 0 {
                 let double_dest = dest << 8;
                 if double_dest & occupied == 0 {
-                    movelist.add_move(Move::new(
+                    movelist.add_move(Move::quiet(
                         pos,
                         Square(double_dest.trailing_zeros() as u8),
-                        None,
                     ));
                 }
             }
@@ -54,14 +61,13 @@ fn pawn_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
     } else {
         let dest = pos_bb >> 8;
         if dest & occupied == 0 {
-            add_pawn_targets(pos, dest, RANK_1, movelist);
+            add_pawn_targets(pos, dest, RANK_1, false, movelist);
             if pos_bb & RANK_7 != 0 {
                 let double_dest = dest >> 8;
                 if double_dest & occupied == 0 {
-                    movelist.add_move(Move::new(
+                    movelist.add_move(Move::quiet(
                         pos,
                         Square(double_dest.trailing_zeros() as u8),
-                        None,
                     ));
                 }
             }
@@ -77,10 +83,10 @@ fn pawn_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
         let right_attack = (pos_bb & NOT_H_FILE) << 9;
         let attacks =
             (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::Black);
-        add_pawn_targets(pos, attacks, RANK_8, movelist);
+        add_pawn_targets(pos, attacks, RANK_8, true, movelist);
         if let Some(ep_sq) = board.get_en_passant_square() {
             if (left_attack | right_attack) & ep_sq.to_bitboard() != 0 {
-                movelist.add_move(Move::new(pos, ep_sq, None));
+                movelist.add_move(Move::en_passant(pos, ep_sq));
             }
         }
     } else {
@@ -88,10 +94,10 @@ fn pawn_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
         let right_attack = (pos_bb & NOT_H_FILE) >> 7;
         let attacks =
             (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::White);
-        add_pawn_targets(pos, attacks, RANK_1, movelist);
+        add_pawn_targets(pos, attacks, RANK_1, true, movelist);
         if let Some(ep_sq) = board.get_en_passant_square() {
             if (left_attack | right_attack) & ep_sq.to_bitboard() != 0 {
-                movelist.add_move(Move::new(pos, ep_sq, None));
+                movelist.add_move(Move::en_passant(pos, ep_sq));
             }
         }
     }

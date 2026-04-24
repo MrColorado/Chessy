@@ -34,7 +34,7 @@ fn knight_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
 
     targets &= !occupied;
     for dest in extract_pieces_from_bitboard(targets) {
-        movelist.add_move(Move::new(pos, dest, None));
+        movelist.add_move(Move::quiet(pos, dest));
     }
 }
 
@@ -44,7 +44,7 @@ fn knight_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
     let attacks = targets & board.get_occupied_squares_for_color(board.get_opponent_color());
 
     for dest in extract_pieces_from_bitboard(attacks) {
-        movelist.add_move(Move::new(pos, dest, None));
+        movelist.add_move(Move::capture(pos, dest));
     }
 }
 

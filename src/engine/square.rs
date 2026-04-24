@@ -13,7 +13,7 @@ use std::fmt;
 //   rank 2 │  8  9 10 11 12 13 14 15
 //   rank 1 │  0  1  2  3  4  5  6  7
 //            ─────────────────────────
-//              a  b  c  d  e  f  g  h   (file)
+//             a  b  c  d  e  f  g  h   (file)
 //
 // index = rank * 8 + file   (both 0-based)
 
