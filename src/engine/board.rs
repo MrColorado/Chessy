@@ -328,37 +328,39 @@ impl Board {
     }
 
     pub fn make_move(&mut self, mv: Move) -> IrreversibleState {
-        let piece_from = self.get_piece_at(mv.from()).unwrap();
-        let piece_to = self.get_piece_at(mv.to());
+        let (piece, _) = self.get_piece_at(mv.from()).unwrap();
+        let is_capture = matches!(mv.kind(), MoveKind::Capture | MoveKind::PromotionCapture(_));
+        let captured_piece = is_capture.then(|| self.get_piece_at(mv.to()).map(|(p, _)| p)).flatten();
 
         let irreversibile_state = IrreversibleState {
             castling_rights: self.castling_rights,
             en_passant_square: self.en_passant_square,
             halfmove_clock: self.halfmove_clock,
-            captured_piece: piece_to.map(|(piece, _)| piece),
+            captured_piece,
         };
 
         let color = self.get_current_player_color();
-        let oponemt_color = self.get_opponent_color();
-        self.move_piece(piece_from.0, piece_from.1, mv.from(), mv.to());
+        let opponent_color = self.get_opponent_color();
         match mv.kind() {
             MoveKind::Promotion(_) => {
-                self.remove_piece(Piece::Pawn, color, mv.to());
+                self.remove_piece(Piece::Pawn, color, mv.from());
+                self.place_piece(mv.promotion().unwrap(), color, mv.to());
+            }
+            MoveKind::PromotionCapture(_) => {
+                self.remove_piece(captured_piece.unwrap(), opponent_color, mv.to());
+                self.remove_piece(Piece::Pawn, color, mv.from());
                 self.place_piece(mv.promotion().unwrap(), color, mv.to());
             }
             MoveKind::Capture => {
-                self.remove_piece(piece_to.unwrap().0, oponemt_color, mv.to());
-            }
-            MoveKind::PromotionCapture(_) => {
-                self.remove_piece(piece_to.unwrap().0, oponemt_color, mv.to());
-                self.remove_piece(Piece::Pawn, color, mv.to());
-                self.place_piece(mv.promotion().unwrap(), color, mv.to());
+                self.remove_piece(captured_piece.unwrap(), opponent_color, mv.to());
+                self.move_piece(piece, color, mv.from(), mv.to());
             }
             MoveKind::KingsideCastle => {
                 let (rook_from, rook_to) = match color {
                     Color::White => (Square::H1, Square::F1),
                     Color::Black => (Square::H8, Square::F8),
                 };
+                self.move_piece(Piece::King, color, mv.from(), mv.to());
                 self.move_piece(Piece::Rook, color, rook_from, rook_to);
             }
             MoveKind::QueensideCastle => {
@@ -366,24 +368,26 @@ impl Board {
                     Color::White => (Square::A1, Square::D1),
                     Color::Black => (Square::A8, Square::D8),
                 };
+                self.move_piece(Piece::King, color, mv.from(), mv.to());
                 self.move_piece(Piece::Rook, color, rook_from, rook_to);
             }
             MoveKind::EnPassant => {
+                self.move_piece(Piece::Pawn, color, mv.from(), mv.to());
                 let captured_pawn_square = match color {
                     Color::White => Square((mv.to().to_index() - 8) as u8),
                     Color::Black => Square((mv.to().to_index() + 8) as u8),
                 };
-                self.remove_piece(Piece::Pawn, oponemt_color, captured_pawn_square);
+                self.remove_piece(Piece::Pawn, opponent_color, captured_pawn_square);
             }
-            default => {
-                // No additional board updates needed for double pawn push
+            _ => {
+                self.move_piece(piece, color, mv.from(), mv.to());
             }
         }
 
         self.castling_rights.0 &= CASTLING_RIGHTS_MASK[mv.from().to_index() as usize]
             & CASTLING_RIGHTS_MASK[mv.to().to_index() as usize];
 
-        self.halfmove_clock = if piece_from.0 == Piece::Pawn || mv.kind() == MoveKind::Capture {
+        self.halfmove_clock = if piece == Piece::Pawn || is_capture {
             0
         } else {
             self.halfmove_clock + 1
@@ -397,14 +401,63 @@ impl Board {
         };
         self.fullmove_number += if self.white_to_move { 0 } else { 1 };
         self.white_to_move = !self.white_to_move;
-
         irreversibile_state
     }
 
-    pub fn unmake_move(&mut self, _mv: Move) {
-        self.castling_rights.0 &= CASTLING_RIGHTS_MASK[_mv.from().to_index() as usize]
-            & CASTLING_RIGHTS_MASK[_mv.to().to_index() as usize];
-        // TODO implement move unmaking later
+    pub fn unmake_move(&mut self, mv: Move, state: IrreversibleState) { 
+        self.white_to_move = !self.white_to_move;
+        self.en_passant_square = state.en_passant_square;
+        self.halfmove_clock = state.halfmove_clock;
+        self.castling_rights = state.castling_rights;
+        self.fullmove_number -= if self.white_to_move { 0 } else { 1 };
+
+        let color = self.get_current_player_color();
+        let opponent_color = self.get_opponent_color();
+
+        match mv.kind() {
+            MoveKind::Promotion(_) => {
+                self.remove_piece(mv.promotion().unwrap(), color, mv.to());
+                self.place_piece(Piece::Pawn, color, mv.from());
+            }
+            MoveKind::PromotionCapture(_) => {
+                self.remove_piece(mv.promotion().unwrap(), color, mv.to());
+                self.place_piece(Piece::Pawn, color, mv.from());
+                self.place_piece(state.captured_piece.unwrap(), opponent_color, mv.to());
+            }
+            MoveKind::Capture => {
+                let (piece, _) = self.get_piece_at(mv.to()).unwrap();
+                self.move_piece(piece, color, mv.to(), mv.from());
+                self.place_piece(state.captured_piece.unwrap(), opponent_color, mv.to());
+            }
+            MoveKind::KingsideCastle => {
+                let (rook_from, rook_to) = match color {
+                    Color::White => (Square::H1, Square::F1),
+                    Color::Black => (Square::H8, Square::F8),
+                };
+                self.move_piece(Piece::King, color, mv.to(), mv.from());
+                self.move_piece(Piece::Rook, color, rook_to, rook_from);
+            }
+            MoveKind::QueensideCastle => {
+                let (rook_from, rook_to) = match color {
+                    Color::White => (Square::A1, Square::D1),
+                    Color::Black => (Square::A8, Square::D8),
+                };
+                self.move_piece(Piece::King, color, mv.to(), mv.from());
+                self.move_piece(Piece::Rook, color, rook_to, rook_from);
+            }
+            MoveKind::EnPassant => {
+                self.move_piece(Piece::Pawn, color, mv.to(), mv.from());
+                let captured_pawn_square = match color {
+                    Color::White => Square((mv.to().to_index() - 8) as u8),
+                    Color::Black => Square((mv.to().to_index() + 8) as u8),
+                };
+                self.place_piece(Piece::Pawn, opponent_color, captured_pawn_square);
+            }
+            _ => {
+                let (piece, _) = self.get_piece_at(mv.to()).unwrap();
+                self.move_piece(piece, color, mv.to(), mv.from());
+            }
+        }
     }
 
     fn move_piece(&mut self, piece: Piece, color: Color, from: Square, to: Square) {
