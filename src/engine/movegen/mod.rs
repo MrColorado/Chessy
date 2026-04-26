@@ -3,15 +3,18 @@ use crate::engine::board::Board;
 use crate::engine::mv::{Move, Movelist};
 use crate::engine::square::Square;
 
+mod magic;
 mod king;
 mod knight;
 mod pawn;
 mod rook;
+mod bishop;
 
 use king::gen_king_moves;
 use knight::{gen_knight_attacks, gen_knight_moves};
 use pawn::{gen_pawn_attacks, gen_pawn_moves};
 use rook::{gen_rook_attacks, gen_rook_moves};
+use bishop::{gen_bishop_attacks, gen_bishop_moves};
 
 const RANK_8: BitBoard = 0xFF00000000000000;
 const RANK_7: BitBoard = 0x00FF000000000000;
@@ -71,6 +74,7 @@ pub fn gen_moves(board: &Board) -> Movelist {
     gen_knight_moves(board, &mut movelist);
     gen_king_moves(board, &mut movelist);
     gen_rook_moves(board, &mut movelist);
+    gen_bishop_moves(board, &mut movelist);
     movelist
 }
 
@@ -79,6 +83,6 @@ pub fn gen_attacks(board: &Board) -> BitBoard {
     attacks |= gen_pawn_attacks(board);
     attacks |= gen_knight_attacks(board);
     attacks |= gen_rook_attacks(board);
-
+    attacks |= gen_bishop_attacks(board);
     attacks
 }
