@@ -61,7 +61,7 @@ fn pawn_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
             if pos_bb & RANK_2 != 0 {
                 let double_dest = dest << 8;
                 if double_dest & occupied == 0 {
-                    movelist.add_move(Move::quiet(pos, Square(double_dest.trailing_zeros() as u8)));
+                    movelist.add_move(Move::double_pawn_push(pos, Square(double_dest.trailing_zeros() as u8)));
                 }
             }
         }
@@ -72,7 +72,7 @@ fn pawn_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
             if pos_bb & RANK_7 != 0 {
                 let double_dest = dest >> 8;
                 if double_dest & occupied == 0 {
-                    movelist.add_move(Move::quiet(pos, Square(double_dest.trailing_zeros() as u8)));
+                    movelist.add_move(Move::double_pawn_push(pos, Square(double_dest.trailing_zeros() as u8)));
                 }
             }
         }
