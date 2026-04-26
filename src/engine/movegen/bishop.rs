@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use crate::engine::board::{BitBoard, Board};
 use crate::engine::movegen::magic::MagicTable;
 use crate::engine::mv::Movelist;
-use crate::engine::piece::Piece;
+use crate::engine::piece::{Piece, Color};
 use crate::engine::square::Square;
 
 
@@ -27,9 +27,8 @@ pub(super) fn gen_bishop_moves(board: &Board, movelist: &mut Movelist) {
     }
 }
 
-pub(super) fn gen_bishop_attacks(board: &Board) -> BitBoard {
+pub(super) fn gen_bishop_attacks(board: &Board, color: Color) -> BitBoard {
     let table = get_bishop_table();
-    let color = board.get_current_player_color();
     let bishops = board.get_bitboard_for_piece(Piece::Bishop, color);
     let occupancy = board.get_occupied_squares();
     let mut attacks = 0u64;
@@ -150,7 +149,7 @@ mod tests {
 
     fn attacks_for(fen: &str) -> BitBoard {
         let board = Board::from_fen(fen).expect("valid FEN");
-        gen_bishop_attacks(&board)
+        gen_bishop_attacks(&board, board.get_current_player_color())
     }
 
     #[test]

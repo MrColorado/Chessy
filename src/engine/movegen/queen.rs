@@ -1,6 +1,6 @@
 use crate::engine::board::{BitBoard, Board};
 use crate::engine::mv::Movelist;
-use crate::engine::piece::Piece;
+use crate::engine::piece::{Piece, Color};
 use crate::engine::square::Square;
 
 use super::bishop::get_bishop_table;
@@ -21,10 +21,9 @@ pub(super) fn gen_queen_moves(board: &Board, movelist: &mut Movelist) {
     }
 }
 
-pub(super) fn gen_queen_attacks(board: &Board) -> BitBoard {
+pub(super) fn gen_queen_attacks(board: &Board, color: Color) -> BitBoard {
     let rook_table = get_rook_table();
     let bishop_table = get_bishop_table();
-    let color = board.get_current_player_color();
     let queens = board.get_bitboard_for_piece(Piece::Queen, color);
     let occupancy = board.get_occupied_squares();
     let mut attacks = 0u64;
@@ -56,7 +55,7 @@ mod tests {
 
     fn attacks_for(fen: &str) -> BitBoard {
         let board = Board::from_fen(fen).expect("valid FEN");
-        gen_queen_attacks(&board)
+        gen_queen_attacks(&board, board.get_current_player_color())
     }
 
     #[test]

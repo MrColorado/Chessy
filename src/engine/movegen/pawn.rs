@@ -15,13 +15,12 @@ pub(super) fn gen_pawn_moves(board: &Board, movelist: &mut Movelist) {
     }
 }
 
-pub(super) fn gen_pawn_attacks(board: &Board) -> BitBoard {
-    let color = board.get_current_player_color();
+pub(super) fn gen_pawn_attacks(board: &Board, color: Color) -> BitBoard {
     let pawns = board.get_bitboard_for_piece(Piece::Pawn, color);
 
     let mut attacks = 0u64;
     for pos in extract_pieces_from_bitboard(pawns) {
-        attacks |= pawn_sqare_attacks(pos, board);
+        attacks |= pawn_sqare_attacks(pos, color);
     }
     attacks
 }
@@ -62,10 +61,7 @@ fn pawn_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
             if pos_bb & RANK_2 != 0 {
                 let double_dest = dest << 8;
                 if double_dest & occupied == 0 {
-                    movelist.add_move(Move::quiet(
-                        pos,
-                        Square(double_dest.trailing_zeros() as u8),
-                    ));
+                    movelist.add_move(Move::quiet(pos, Square(double_dest.trailing_zeros() as u8)));
                 }
             }
         }
@@ -76,10 +72,7 @@ fn pawn_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
             if pos_bb & RANK_7 != 0 {
                 let double_dest = dest >> 8;
                 if double_dest & occupied == 0 {
-                    movelist.add_move(Move::quiet(
-                        pos,
-                        Square(double_dest.trailing_zeros() as u8),
-                    ));
+                    movelist.add_move(Move::quiet(pos, Square(double_dest.trailing_zeros() as u8)));
                 }
             }
         }
@@ -114,16 +107,19 @@ fn pawn_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
     }
 }
 
-fn pawn_sqare_attacks(pos: Square, board: &Board) -> BitBoard {
+fn pawn_sqare_attacks(pos: Square, color: Color) -> BitBoard {
     let pos_bb = pos.to_bitboard();
-    if board.get_white_to_move() {
-        let left_attack = (pos_bb & NOT_A_FILE) << 7;
-        let right_attack = (pos_bb & NOT_H_FILE) << 9;
-        left_attack | right_attack
-    } else {
-        let left_attack = (pos_bb & NOT_A_FILE) >> 9;
-        let right_attack = (pos_bb & NOT_H_FILE) >> 7;
-        left_attack | right_attack
+    match color {
+        Color::White => {
+            let left_attack = (pos_bb & NOT_A_FILE) << 7;
+            let right_attack = (pos_bb & NOT_H_FILE) << 9;
+            left_attack | right_attack
+        }
+        Color::Black => {
+            let left_attack = (pos_bb & NOT_A_FILE) >> 9;
+            let right_attack = (pos_bb & NOT_H_FILE) >> 7;
+            left_attack | right_attack
+        }
     }
 }
 
@@ -134,7 +130,7 @@ mod tests {
     fn moves_for(fen: &str) -> Movelist {
         let board = Board::from_fen(fen).expect("valid FEN");
         let mut list = Movelist::new();
-        gen_pawn_moves( &board, &mut list);
+        gen_pawn_moves(&board, &mut list);
         list
     }
 
@@ -222,7 +218,7 @@ mod tests {
 
     fn pawn_attacks_for(fen: &str) -> BitBoard {
         let board = Board::from_fen(fen).expect("valid FEN");
-        gen_pawn_attacks(&board)
+        gen_pawn_attacks(&board, board.get_current_player_color())
     }
 
     #[test]
@@ -265,10 +261,22 @@ mod tests {
     fn pawn_attacks_union_of_two_pawns() {
         // White pawns on c3 and g3
         let attacks = pawn_attacks_for("8/8/8/8/8/2P3P1/8/8 w - - 0 1");
-        assert!(attacks & Square::B4.to_bitboard() != 0, "b4 controlled by c3");
-        assert!(attacks & Square::D4.to_bitboard() != 0, "d4 controlled by c3");
-        assert!(attacks & Square::F4.to_bitboard() != 0, "f4 controlled by g3");
-        assert!(attacks & Square::H4.to_bitboard() != 0, "h4 controlled by g3");
+        assert!(
+            attacks & Square::B4.to_bitboard() != 0,
+            "b4 controlled by c3"
+        );
+        assert!(
+            attacks & Square::D4.to_bitboard() != 0,
+            "d4 controlled by c3"
+        );
+        assert!(
+            attacks & Square::F4.to_bitboard() != 0,
+            "f4 controlled by g3"
+        );
+        assert!(
+            attacks & Square::H4.to_bitboard() != 0,
+            "h4 controlled by g3"
+        );
         assert_eq!(attacks.count_ones(), 4);
     }
 }

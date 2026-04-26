@@ -1,6 +1,7 @@
 use crate::engine::board::{BitBoard, Board};
 use crate::engine::mv::Movelist;
 use crate::engine::piece::Piece;
+use crate::engine::piece::Color;
 use crate::engine::square::Square;
 
 use super::extract_pieces_from_bitboard;
@@ -16,8 +17,7 @@ pub(super) fn gen_knight_moves(board: &Board, movelist: &mut Movelist) {
     }
 }
 
-pub(super) fn gen_knight_attacks(board: &Board) -> BitBoard {
-    let color = board.get_current_player_color();
+pub(super) fn gen_knight_attacks(board: &Board, color: Color) -> BitBoard {
     let knights = board.get_bitboard_for_piece(Piece::Knight, color);
     let mut attacks = 0u64;
 
@@ -130,7 +130,7 @@ mod tests {
 
     fn attacks_for(fen: &str) -> BitBoard {
         let board = Board::from_fen(fen).expect("valid FEN");
-        gen_knight_attacks(&board)
+        gen_knight_attacks(&board, board.get_current_player_color())
     }
 
     #[test]

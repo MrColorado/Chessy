@@ -2,6 +2,7 @@ use crate::engine::board::BitBoard;
 use crate::engine::board::Board;
 use crate::engine::mv::{Move, Movelist};
 use crate::engine::square::Square;
+use crate::engine::piece::Color;
 
 mod magic;
 mod king;
@@ -11,7 +12,7 @@ mod rook;
 mod bishop;
 mod queen;
 
-use king::gen_king_moves;
+use king::{gen_king_moves, gen_king_attacks};
 use knight::{gen_knight_attacks, gen_knight_moves};
 use pawn::{gen_pawn_attacks, gen_pawn_moves};
 use rook::{gen_rook_attacks, gen_rook_moves};
@@ -70,6 +71,18 @@ pub(super) fn add_capture_moves(
     }
 }
 
+pub(super) fn gen_attacks_for_color(board: &Board, color: Color) -> BitBoard {
+    let mut attacks = 0u64;
+    attacks |= gen_pawn_attacks(board, color);
+    attacks |= gen_knight_attacks(board, color);
+    attacks |= gen_rook_attacks(board, color);
+    attacks |= gen_bishop_attacks(board, color);
+    attacks |= gen_queen_attacks(board, color);
+    attacks |= gen_king_attacks(board, color);
+    attacks
+}
+
+
 pub fn gen_moves(board: &Board) -> Movelist {
     let mut movelist = Movelist::new();
     gen_pawn_moves(board, &mut movelist);
@@ -79,14 +92,4 @@ pub fn gen_moves(board: &Board) -> Movelist {
     gen_bishop_moves(board, &mut movelist);
     gen_queen_moves(board, &mut movelist);
     movelist
-}
-
-pub fn gen_attacks(board: &Board) -> BitBoard {
-    let mut attacks = 0u64;
-    attacks |= gen_pawn_attacks(board);
-    attacks |= gen_knight_attacks(board);
-    attacks |= gen_rook_attacks(board);
-    attacks |= gen_bishop_attacks(board);
-    attacks |= gen_queen_attacks(board);
-    attacks
 }

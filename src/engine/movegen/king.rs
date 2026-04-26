@@ -1,29 +1,31 @@
 use crate::engine::board::{BitBoard, Board};
 use crate::engine::mv::{Move, Movelist};
-use crate::engine::piece::Piece;
+use crate::engine::piece::{Piece, Color};
 use crate::engine::square::Square;
 
-use super::extract_pieces_from_bitboard;
-use super::{add_capture_moves, add_quiet_moves, NOT_A_FILE, NOT_H_FILE};
+use super::{extract_pieces_from_bitboard, gen_attacks_for_color, add_capture_moves, add_quiet_moves, NOT_A_FILE, NOT_H_FILE};
 
 pub(super) fn gen_king_moves(board: &Board, movelist: &mut Movelist) {
     let color = board.get_current_player_color();
     let king = board.get_bitboard_for_piece(Piece::King, color);
+    let enemy_attacks = gen_attacks_for_color(board, board.get_opponent_color());
     for pos in extract_pieces_from_bitboard(king) {
-        let targets = king_targets(pos.to_bitboard());
+        let targets = king_targets(pos.to_bitboard()) & !enemy_attacks;
         add_quiet_moves(pos, targets, board, movelist);
         add_capture_moves(pos, targets, board, movelist);
     }
-    castle_moves(board, movelist); // TODO check king not in check / passing through attacked squares
+    castle_moves(board, enemy_attacks, movelist); 
 }
 
-pub(super) fn gen_king_attacks(board: &Board, movelist: &mut Movelist) {
-    let color = board.get_current_player_color();
+pub(super) fn gen_king_attacks(board: &Board, color: Color) -> BitBoard {
     let king = board.get_bitboard_for_piece(Piece::King, color);
+    let mut attacks = 0u64;
+    
     for pos in extract_pieces_from_bitboard(king) {
         let targets = king_targets(pos.to_bitboard());
-        add_capture_moves(pos, targets, board, movelist);
+        attacks |= targets;
     }
+    attacks
 }
 
 fn king_targets(pos: BitBoard) -> BitBoard {
@@ -38,14 +40,30 @@ fn king_targets(pos: BitBoard) -> BitBoard {
     target
 }
 
-fn castle_moves(board: &Board, movelist: &mut Movelist) {
-    let color = board.get_current_player_color();
-    if board.can_castle_kingside(color) {
+fn castle_moves(board: &Board, enemy_attacks: BitBoard, movelist: &mut Movelist) {
+    let color: Color = board.get_current_player_color();
+    if board.can_castle_kingside(color) && kingside_path_safe(color, enemy_attacks) {
         movelist.add_move(Move::kingside_castle(color));
     }
-    if board.can_castle_queenside(color) {
+    if board.can_castle_queenside(color) && queenside_path_safe(color, enemy_attacks) {
         movelist.add_move(Move::queenside_castle(color));
     }
+}
+
+fn kingside_path_safe(color: Color, opponent_attacks: BitBoard) -> bool {
+    let transit = match color {
+        Color::White => Square::E1.to_bitboard() | Square::F1.to_bitboard() | Square::G1.to_bitboard(),
+        Color::Black => Square::E8.to_bitboard() | Square::F8.to_bitboard() | Square::G8.to_bitboard(),
+    };
+    opponent_attacks & transit == 0
+}
+
+fn queenside_path_safe(color: Color, opponent_attacks: BitBoard) -> bool {
+    let transit = match color {
+        Color::White => Square::E1.to_bitboard() | Square::D1.to_bitboard() | Square::C1.to_bitboard(),
+        Color::Black => Square::E8.to_bitboard() | Square::D8.to_bitboard() | Square::C8.to_bitboard(),
+    };
+    opponent_attacks & transit == 0
 }
 
 #[cfg(test)]

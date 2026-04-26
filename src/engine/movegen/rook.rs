@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use crate::engine::board::{BitBoard, Board};
 use crate::engine::movegen::magic::MagicTable;
 use crate::engine::mv::Movelist;
-use crate::engine::piece::Piece;
+use crate::engine::piece::{Piece, Color};
 use crate::engine::square::Square;
 
 use super::{add_capture_moves, add_quiet_moves, extract_pieces_from_bitboard};
@@ -26,9 +26,8 @@ pub(super) fn gen_rook_moves(board: &Board, movelist: &mut Movelist) {
     }
 }
 
-pub(super) fn gen_rook_attacks(board: &Board) -> BitBoard {
+pub(super) fn gen_rook_attacks(board: &Board, color: Color) -> BitBoard {
     let table = get_rook_table();
-    let color = board.get_current_player_color();
     let rooks = board.get_bitboard_for_piece(Piece::Rook, color);
     let occupancy = board.get_occupied_squares();
     let mut attacks = 0u64;
@@ -138,7 +137,7 @@ mod tests {
 
     fn attacks_for(fen: &str) -> BitBoard {
         let board = Board::from_fen(fen).expect("valid FEN");
-        gen_rook_attacks(&board)
+        gen_rook_attacks(&board, board.get_current_player_color())
     }
 
 
