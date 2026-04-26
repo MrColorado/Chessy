@@ -200,6 +200,11 @@ impl Board {
         self.fullmove_number
     }
 
+    pub fn get_king_square(&self, color: Color) -> Square {
+        let king_bb = self.get_bitboard_for_piece(Piece::King, color);
+        Square(king_bb.trailing_zeros() as u8)
+    }
+
     pub fn get_bitboard_for_piece(&self, piece: Piece, color: Color) -> BitBoard {
         match (piece, color) {
             (Piece::Pawn, Color::White) => self.white_pawns,

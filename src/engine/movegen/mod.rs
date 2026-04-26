@@ -73,7 +73,7 @@ pub(super) fn add_capture_moves(
     }
 }
 
-pub(super) fn gen_attacks_for_color(board: &Board, color: Color) -> BitBoard {
+pub fn gen_attacks_for_color(board: &Board, color: Color) -> BitBoard {
     let mut attacks = 0u64;
     attacks |= gen_pawn_attacks(board, color);
     attacks |= gen_knight_attacks(board, color);
@@ -83,7 +83,6 @@ pub(super) fn gen_attacks_for_color(board: &Board, color: Color) -> BitBoard {
     attacks |= gen_king_attacks(board, color);
     attacks
 }
-
 
 pub fn gen_moves(board: &Board) -> Movelist {
     let mut movelist = Movelist::new();

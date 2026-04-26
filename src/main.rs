@@ -4,6 +4,7 @@ mod engine {
     pub mod square;
     pub mod mv;
     pub mod movegen;
+    pub mod rule;
 }
 
 fn main() {
