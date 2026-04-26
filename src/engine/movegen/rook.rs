@@ -9,12 +9,12 @@ use crate::engine::square::Square;
 use super::{add_capture_moves, add_quiet_moves, extract_pieces_from_bitboard};
 
 static TABLE: OnceLock<MagicTable> = OnceLock::new();
-fn get_table() -> &'static MagicTable {
+pub(super) fn get_rook_table() -> &'static MagicTable {
     TABLE.get_or_init(|| MagicTable::new(rook_blocker_mask, rook_attacks_slow))
 }
 
 pub(super) fn gen_rook_moves(board: &Board, movelist: &mut Movelist) {
-    let table = get_table();
+    let table = get_rook_table();
     let color = board.get_current_player_color();
     let rooks = board.get_bitboard_for_piece(Piece::Rook, color);
     let occupancy = board.get_occupied_squares();
@@ -27,7 +27,7 @@ pub(super) fn gen_rook_moves(board: &Board, movelist: &mut Movelist) {
 }
 
 pub(super) fn gen_rook_attacks(board: &Board) -> BitBoard {
-    let table = get_table();
+    let table = get_rook_table();
     let color = board.get_current_player_color();
     let rooks = board.get_bitboard_for_piece(Piece::Rook, color);
     let occupancy = board.get_occupied_squares();

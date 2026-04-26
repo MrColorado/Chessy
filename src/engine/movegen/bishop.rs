@@ -10,12 +10,12 @@ use crate::engine::square::Square;
 use super::{add_capture_moves, add_quiet_moves, extract_pieces_from_bitboard};
 
 static TABLE: OnceLock<MagicTable> = OnceLock::new();
-fn get_table() -> &'static MagicTable {
+pub(super) fn get_bishop_table() -> &'static MagicTable {
     TABLE.get_or_init(|| MagicTable::new(bishop_blocker_mask, bishop_attacks_slow))
 }
 
 pub(super) fn gen_bishop_moves(board: &Board, movelist: &mut Movelist) {
-    let table = get_table();
+    let table = get_bishop_table();
     let color = board.get_current_player_color();
     let bishops = board.get_bitboard_for_piece(Piece::Bishop, color);
     let occupancy = board.get_occupied_squares();
@@ -28,7 +28,7 @@ pub(super) fn gen_bishop_moves(board: &Board, movelist: &mut Movelist) {
 }
 
 pub(super) fn gen_bishop_attacks(board: &Board) -> BitBoard {
-    let table = get_table();
+    let table = get_bishop_table();
     let color = board.get_current_player_color();
     let bishops = board.get_bitboard_for_piece(Piece::Bishop, color);
     let occupancy = board.get_occupied_squares();
