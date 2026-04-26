@@ -1,15 +1,18 @@
 use crate::engine::board::BitBoard;
 use crate::engine::board::Board;
+use crate::engine::movegen::rook::gen_rook_attacks;
 use crate::engine::mv::{Move, Movelist};
 use crate::engine::square::Square;
 
 mod pawn;
 mod knight;
 mod king;
+mod rook;
 
 use pawn::gen_pawn_moves;
 use knight::gen_knight_moves;
 use king::gen_king_moves;
+use rook::gen_rook_moves;
 
 const RANK_8: BitBoard = 0xFF00000000000000;
 const RANK_7: BitBoard = 0x00FF000000000000;
@@ -56,9 +59,13 @@ pub fn gen_moves(board: &Board) -> Movelist {
     gen_pawn_moves(board, &mut movelist);
     gen_knight_moves(board, &mut movelist);
     gen_king_moves(board, &mut movelist);
+    gen_rook_moves(board, &mut movelist);
     movelist
 }
 
 pub fn gen_attacks(board: &Board) -> BitBoard {
-    0
+    let mut attacks = 0u64;
+    attacks |= gen_rook_attacks(board);
+
+    attacks
 }
