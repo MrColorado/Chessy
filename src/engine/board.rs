@@ -328,7 +328,7 @@ impl Board {
     }
 
     pub fn make_move(&mut self, mv: Move) -> IrreversibleState {
-        let (piece, _) = self.get_piece_at(mv.from()).unwrap();
+        let piece = mv.piece();
         let is_capture = matches!(mv.kind(), MoveKind::Capture | MoveKind::PromotionCapture(_));
         let captured_piece = is_capture.then(|| self.get_piece_at(mv.to()).map(|(p, _)| p)).flatten();
 
@@ -425,8 +425,7 @@ impl Board {
                 self.place_piece(state.captured_piece.unwrap(), opponent_color, mv.to());
             }
             MoveKind::Capture => {
-                let (piece, _) = self.get_piece_at(mv.to()).unwrap();
-                self.move_piece(piece, color, mv.to(), mv.from());
+                self.move_piece(mv.piece(), color, mv.to(), mv.from());
                 self.place_piece(state.captured_piece.unwrap(), opponent_color, mv.to());
             }
             MoveKind::KingsideCastle => {
@@ -454,8 +453,7 @@ impl Board {
                 self.place_piece(Piece::Pawn, opponent_color, captured_pawn_square);
             }
             _ => {
-                let (piece, _) = self.get_piece_at(mv.to()).unwrap();
-                self.move_piece(piece, color, mv.to(), mv.from());
+                self.move_piece(mv.piece(), color, mv.to(), mv.from());
             }
         }
     }

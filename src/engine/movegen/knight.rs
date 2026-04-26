@@ -12,8 +12,8 @@ pub(super) fn gen_knight_moves(board: &Board, movelist: &mut Movelist) {
     let knights = board.get_bitboard_for_piece(Piece::Knight, color);
     for pos in extract_pieces_from_bitboard(knights) {
         let targets = knight_targets(pos.to_bitboard());
-        add_quiet_moves(pos, targets, board, movelist);
-        add_capture_moves(pos, targets, board, movelist);
+        add_quiet_moves(pos, targets, Piece::Knight, board, movelist);
+        add_capture_moves(pos, targets, Piece::Knight, board, movelist);
     }
 }
 

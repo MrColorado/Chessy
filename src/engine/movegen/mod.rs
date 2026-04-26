@@ -2,7 +2,7 @@ use crate::engine::board::BitBoard;
 use crate::engine::board::Board;
 use crate::engine::mv::{Move, Movelist};
 use crate::engine::square::Square;
-use crate::engine::piece::Color;
+use crate::engine::piece::{Color, Piece};
 
 mod magic;
 mod king;
@@ -50,24 +50,26 @@ fn extract_pieces_from_bitboard(bitboard: u64) -> BitBoardIter {
 pub(super) fn add_quiet_moves(
     from: Square,
     targets: BitBoard,
+    piece: Piece,
     board: &Board,
     movelist: &mut Movelist,
 ) {
     let quiets = targets & !board.get_occupied_squares();
     for dest in extract_pieces_from_bitboard(quiets) {
-        movelist.add_move(Move::quiet(from, dest));
+        movelist.add_move(Move::quiet(from, dest, piece));
     }
 }
 
 pub(super) fn add_capture_moves(
     from: Square,
     targets: BitBoard,
+    piece: Piece,
     board: &Board,
     movelist: &mut Movelist,
 ) {
     let captures = targets & board.get_occupied_squares_for_color(board.get_opponent_color());
     for dest in extract_pieces_from_bitboard(captures) {
-        movelist.add_move(Move::capture(from, dest));
+        movelist.add_move(Move::capture(from, dest, piece));
     }
 }
 

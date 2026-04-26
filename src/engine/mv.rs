@@ -27,107 +27,59 @@ pub struct IrreversibleState {
 pub struct Move {
     from: Square,
     to: Square,
+    piece: Piece,
     kind: MoveKind,
 }
 
 impl Default for Move {
     fn default() -> Self {
-        Move {
-            from: Square::A1,
-            to: Square::A1,
-            kind: MoveKind::Quiet,
-        }
+        Move { from: Square::A1, to: Square::A1, piece: Piece::Pawn, kind: MoveKind::Quiet }
     }
 }
 
 impl Move {
-    pub fn quiet(from: Square, to: Square) -> Move {
-        Move {
-            from,
-            to,
-            kind: MoveKind::Quiet,
-        }
+    pub fn quiet(from: Square, to: Square, piece: Piece) -> Move {
+        Move { from, to, piece, kind: MoveKind::Quiet }
     }
 
-    pub fn capture(from: Square, to: Square) -> Move {
-        Move {
-            from,
-            to,
-            kind: MoveKind::Capture,
-        }
+    pub fn capture(from: Square, to: Square, piece: Piece) -> Move {
+        Move { from, to, piece, kind: MoveKind::Capture }
     }
 
-    pub fn promote(from: Square, to: Square, piece: Piece) -> Move {
-        Move {
-            from,
-            to,
-            kind: MoveKind::Promotion(piece),
-        }
+    pub fn promote(from: Square, to: Square, promoted_to: Piece) -> Move {
+        Move { from, to, piece: Piece::Pawn, kind: MoveKind::Promotion(promoted_to) }
     }
 
-    pub fn promote_capture(from: Square, to: Square, piece: Piece) -> Move {
-        Move {
-            from,
-            to,
-            kind: MoveKind::PromotionCapture(piece),
-        }
+    pub fn promote_capture(from: Square, to: Square, promoted_to: Piece) -> Move {
+        Move { from, to, piece: Piece::Pawn, kind: MoveKind::PromotionCapture(promoted_to) }
     }
 
     pub fn en_passant(from: Square, to: Square) -> Move {
-        Move {
-            from,
-            to,
-            kind: MoveKind::EnPassant,
-        }
+        Move { from, to, piece: Piece::Pawn, kind: MoveKind::EnPassant }
     }
 
     pub fn double_pawn_push(from: Square, to: Square) -> Move {
-        Move {
-            from,
-            to,
-            kind: MoveKind::DoublePawnPush,
-        }
+        Move { from, to, piece: Piece::Pawn, kind: MoveKind::DoublePawnPush }
     }
 
     pub fn kingside_castle(color: Color) -> Move {
         match color {
-            Color::White => Move {
-                from: Square::E1,
-                to: Square::G1,
-                kind: MoveKind::KingsideCastle,
-            },
-            Color::Black => Move {
-                from: Square::E8,
-                to: Square::G8,
-                kind: MoveKind::KingsideCastle,
-            },
+            Color::White => Move { from: Square::E1, to: Square::G1, piece: Piece::King, kind: MoveKind::KingsideCastle },
+            Color::Black => Move { from: Square::E8, to: Square::G8, piece: Piece::King, kind: MoveKind::KingsideCastle },
         }
     }
 
     pub fn queenside_castle(color: Color) -> Move {
         match color {
-            Color::White => Move {
-                from: Square::E1,
-                to: Square::C1,
-                kind: MoveKind::QueensideCastle,
-            },
-            Color::Black => Move {
-                from: Square::E8,
-                to: Square::C8,
-                kind: MoveKind::QueensideCastle,
-            },
+            Color::White => Move { from: Square::E1, to: Square::C1, piece: Piece::King, kind: MoveKind::QueensideCastle },
+            Color::Black => Move { from: Square::E8, to: Square::C8, piece: Piece::King, kind: MoveKind::QueensideCastle },
         }
     }
 
-    pub fn from(&self) -> Square {
-        self.from
-    }
-    pub fn to(&self) -> Square {
-        self.to
-    }
-    pub fn kind(&self) -> MoveKind {
-        self.kind
-    }
+    pub fn from(&self) -> Square { self.from }
+    pub fn to(&self) -> Square { self.to }
+    pub fn piece(&self) -> Piece { self.piece }
+    pub fn kind(&self) -> MoveKind { self.kind }
 
     pub fn promotion(&self) -> Option<Piece> {
         match self.kind {

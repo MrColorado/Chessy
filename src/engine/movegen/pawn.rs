@@ -43,9 +43,9 @@ fn add_pawn_targets(
                 movelist.add_move(mv);
             }
         } else if is_capture {
-            movelist.add_move(Move::capture(from, dest));
+            movelist.add_move(Move::capture(from, dest, Piece::Pawn));
         } else {
-            movelist.add_move(Move::quiet(from, dest));
+            movelist.add_move(Move::quiet(from, dest, Piece::Pawn));
         }
     }
 }

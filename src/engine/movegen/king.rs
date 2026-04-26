@@ -11,8 +11,8 @@ pub(super) fn gen_king_moves(board: &Board, movelist: &mut Movelist) {
     let enemy_attacks = gen_attacks_for_color(board, board.get_opponent_color());
     for pos in extract_pieces_from_bitboard(king) {
         let targets = king_targets(pos.to_bitboard()) & !enemy_attacks;
-        add_quiet_moves(pos, targets, board, movelist);
-        add_capture_moves(pos, targets, board, movelist);
+        add_quiet_moves(pos, targets, Piece::King, board, movelist);
+        add_capture_moves(pos, targets, Piece::King, board, movelist);
     }
     castle_moves(board, enemy_attacks, movelist); 
 }

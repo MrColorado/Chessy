@@ -22,8 +22,8 @@ pub(super) fn gen_bishop_moves(board: &Board, movelist: &mut Movelist) {
 
     for sq in extract_pieces_from_bitboard(bishops) {
         let targets = table.attacks(sq, occupancy);
-        add_quiet_moves(sq, targets, board, movelist);
-        add_capture_moves(sq, targets, board, movelist);
+        add_quiet_moves(sq, targets, Piece::Bishop, board, movelist);
+        add_capture_moves(sq, targets, Piece::Bishop, board, movelist);
     }
 }
 

@@ -21,8 +21,8 @@ pub(super) fn gen_rook_moves(board: &Board, movelist: &mut Movelist) {
 
     for sq in extract_pieces_from_bitboard(rooks) {
         let targets = table.attacks(sq, occupancy);
-        add_quiet_moves(sq, targets, board, movelist);
-        add_capture_moves(sq, targets, board, movelist);
+        add_quiet_moves(sq, targets, Piece::Rook, board, movelist);
+        add_capture_moves(sq, targets, Piece::Rook, board, movelist);
     }
 }
 

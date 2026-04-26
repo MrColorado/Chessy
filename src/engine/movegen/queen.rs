@@ -16,8 +16,8 @@ pub(super) fn gen_queen_moves(board: &Board, movelist: &mut Movelist) {
 
     for sq in extract_pieces_from_bitboard(queens) {
         let targets = rook_table.attacks(sq, occupancy) | bishop_table.attacks(sq, occupancy);
-        add_quiet_moves(sq, targets, board, movelist);
-        add_capture_moves(sq, targets, board, movelist);
+        add_quiet_moves(sq, targets, Piece::Queen, board, movelist);
+        add_capture_moves(sq, targets, Piece::Queen, board, movelist);
     }
 }
 
