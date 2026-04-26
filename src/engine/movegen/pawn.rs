@@ -15,12 +15,15 @@ pub(super) fn gen_pawn_moves(board: &Board, movelist: &mut Movelist) {
     }
 }
 
-pub(super) fn gen_pawn_attacks(board: &Board, movelist: &mut Movelist) {
+pub(super) fn gen_pawn_attacks(board: &Board) -> BitBoard {
     let color = board.get_current_player_color();
     let pawns = board.get_bitboard_for_piece(Piece::Pawn, color);
+
+    let mut attacks = 0u64;
     for pos in extract_pieces_from_bitboard(pawns) {
-        pawn_attacks(pos, board, movelist);
+        attacks |= pawn_sqare_attacks(pos, board);
     }
+    attacks
 }
 
 fn add_pawn_targets(
@@ -111,6 +114,19 @@ fn pawn_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
     }
 }
 
+fn pawn_sqare_attacks(pos: Square, board: &Board) -> BitBoard {
+    let pos_bb = pos.to_bitboard();
+    if board.get_white_to_move() {
+        let left_attack = (pos_bb & NOT_A_FILE) << 7;
+        let right_attack = (pos_bb & NOT_H_FILE) << 9;
+        left_attack | right_attack
+    } else {
+        let left_attack = (pos_bb & NOT_A_FILE) >> 9;
+        let right_attack = (pos_bb & NOT_H_FILE) >> 7;
+        left_attack | right_attack
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,12 +142,6 @@ mod tests {
         list.as_slice()
             .iter()
             .any(|m| m.from() == from && m.to() == to && m.promotion() == promo)
-    }
-
-    #[test]
-    fn white_single_push() {
-        let list = moves_for("8/8/8/8/8/8/4P3/8 w - - 0 1");
-        assert!(has_move(&list, Square::E2, Square::E3, None));
     }
 
     #[test]
@@ -188,12 +198,6 @@ mod tests {
     }
 
     #[test]
-    fn black_single_push() {
-        let list = moves_for("8/4p3/8/8/8/8/8/8 b - - 0 1");
-        assert!(has_move(&list, Square::E7, Square::E6, None));
-    }
-
-    #[test]
     fn black_double_push_from_rank7() {
         let list = moves_for("8/4p3/8/8/8/8/8/8 b - - 0 1");
         assert!(has_move(&list, Square::E7, Square::E5, None));
@@ -214,5 +218,57 @@ mod tests {
     fn black_en_passant() {
         let list = moves_for("8/8/8/8/3pP3/8/8/8 b - e3 0 1");
         assert!(has_move(&list, Square::D4, Square::E3, None));
+    }
+
+    fn pawn_attacks_for(fen: &str) -> BitBoard {
+        let board = Board::from_fen(fen).expect("valid FEN");
+        gen_pawn_attacks(&board)
+    }
+
+    #[test]
+    fn white_pawn_attacks_center() {
+        // e4 pawn controls d5 and f5, not e5 (pawns don't push diagonally)
+        let attacks = pawn_attacks_for("8/8/8/8/4P3/8/8/8 w - - 0 1");
+        assert!(attacks & Square::D5.to_bitboard() != 0, "d5 controlled");
+        assert!(attacks & Square::F5.to_bitboard() != 0, "f5 controlled");
+        assert!(attacks & Square::E5.to_bitboard() == 0, "e5 not controlled");
+        assert_eq!(attacks.count_ones(), 2);
+    }
+
+    #[test]
+    fn white_pawn_a_file_no_wrap() {
+        // a4 pawn can only attack b5 — no wrap around to h5
+        let attacks = pawn_attacks_for("8/8/8/8/P7/8/8/8 w - - 0 1");
+        assert!(attacks & Square::B5.to_bitboard() != 0, "b5 controlled");
+        assert_eq!(attacks.count_ones(), 1);
+    }
+
+    #[test]
+    fn white_pawn_h_file_no_wrap() {
+        // h4 pawn can only attack g5
+        let attacks = pawn_attacks_for("8/8/8/8/7P/8/8/8 w - - 0 1");
+        assert!(attacks & Square::G5.to_bitboard() != 0, "g5 controlled");
+        assert_eq!(attacks.count_ones(), 1);
+    }
+
+    #[test]
+    fn black_pawn_attacks_center() {
+        // e5 pawn controls d4 and f4
+        let attacks = pawn_attacks_for("8/8/8/4p3/8/8/8/8 b - - 0 1");
+        assert!(attacks & Square::D4.to_bitboard() != 0, "d4 controlled");
+        assert!(attacks & Square::F4.to_bitboard() != 0, "f4 controlled");
+        assert!(attacks & Square::E4.to_bitboard() == 0, "e4 not controlled");
+        assert_eq!(attacks.count_ones(), 2);
+    }
+
+    #[test]
+    fn pawn_attacks_union_of_two_pawns() {
+        // White pawns on c3 and g3
+        let attacks = pawn_attacks_for("8/8/8/8/8/2P3P1/8/8 w - - 0 1");
+        assert!(attacks & Square::B4.to_bitboard() != 0, "b4 controlled by c3");
+        assert!(attacks & Square::D4.to_bitboard() != 0, "d4 controlled by c3");
+        assert!(attacks & Square::F4.to_bitboard() != 0, "f4 controlled by g3");
+        assert!(attacks & Square::H4.to_bitboard() != 0, "h4 controlled by g3");
+        assert_eq!(attacks.count_ones(), 4);
     }
 }

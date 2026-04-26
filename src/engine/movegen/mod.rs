@@ -1,18 +1,17 @@
 use crate::engine::board::BitBoard;
 use crate::engine::board::Board;
-use crate::engine::movegen::rook::gen_rook_attacks;
 use crate::engine::mv::{Move, Movelist};
 use crate::engine::square::Square;
 
-mod pawn;
-mod knight;
 mod king;
+mod knight;
+mod pawn;
 mod rook;
 
-use pawn::gen_pawn_moves;
-use knight::gen_knight_moves;
 use king::gen_king_moves;
-use rook::gen_rook_moves;
+use knight::{gen_knight_attacks, gen_knight_moves};
+use pawn::{gen_pawn_attacks, gen_pawn_moves};
+use rook::{gen_rook_attacks, gen_rook_moves};
 
 const RANK_8: BitBoard = 0xFF00000000000000;
 const RANK_7: BitBoard = 0x00FF000000000000;
@@ -29,7 +28,9 @@ struct BitBoardIter(u64);
 impl Iterator for BitBoardIter {
     type Item = Square;
     fn next(&mut self) -> Option<Square> {
-        if self.0 == 0 { return None; }
+        if self.0 == 0 {
+            return None;
+        }
         let index = self.0.trailing_zeros() as u8;
         self.0 &= self.0 - 1;
         Some(Square(index))
@@ -40,14 +41,24 @@ fn extract_pieces_from_bitboard(bitboard: u64) -> BitBoardIter {
     BitBoardIter(bitboard)
 }
 
-pub(super) fn add_quiet_moves(from: Square, targets: BitBoard, board: &Board, movelist: &mut Movelist) {
+pub(super) fn add_quiet_moves(
+    from: Square,
+    targets: BitBoard,
+    board: &Board,
+    movelist: &mut Movelist,
+) {
     let quiets = targets & !board.get_occupied_squares();
     for dest in extract_pieces_from_bitboard(quiets) {
         movelist.add_move(Move::quiet(from, dest));
     }
 }
 
-pub(super) fn add_capture_moves(from: Square, targets: BitBoard, board: &Board, movelist: &mut Movelist) {
+pub(super) fn add_capture_moves(
+    from: Square,
+    targets: BitBoard,
+    board: &Board,
+    movelist: &mut Movelist,
+) {
     let captures = targets & board.get_occupied_squares_for_color(board.get_opponent_color());
     for dest in extract_pieces_from_bitboard(captures) {
         movelist.add_move(Move::capture(from, dest));
@@ -65,6 +76,8 @@ pub fn gen_moves(board: &Board) -> Movelist {
 
 pub fn gen_attacks(board: &Board) -> BitBoard {
     let mut attacks = 0u64;
+    attacks |= gen_pawn_attacks(board);
+    attacks |= gen_knight_attacks(board);
     attacks |= gen_rook_attacks(board);
 
     attacks

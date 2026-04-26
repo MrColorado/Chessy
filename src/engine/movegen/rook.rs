@@ -36,7 +36,7 @@ pub(super) fn gen_rook_attacks(board: &Board) -> BitBoard {
     for sq in extract_pieces_from_bitboard(rooks) {
         attacks |= table.attacks(sq, occupancy);
     }
-    
+
     attacks
 }
 
@@ -365,5 +365,52 @@ mod tests {
             let got      = table.attacks(square, occupancy);
             assert_eq!(got, expected, "blocker mismatch on {}", square);
         }
+    }
+
+    fn attacks_for(fen: &str) -> BitBoard {
+        let board = Board::from_fen(fen).expect("valid FEN");
+        gen_rook_attacks(&board)
+    }
+
+    #[test]
+    fn gen_attacks_single_rook_empty_board() {
+        // Rook on e4 alone — controls 14 squares (7 on file + 7 on rank)
+        let attacks = attacks_for("8/8/8/8/4R3/8/8/8 w - - 0 1");
+        assert_eq!(attacks.count_ones(), 14);
+        assert!(attacks & Square::E1.to_bitboard() != 0, "e1 controlled");
+        assert!(attacks & Square::E8.to_bitboard() != 0, "e8 controlled");
+        assert!(attacks & Square::A4.to_bitboard() != 0, "a4 controlled");
+        assert!(attacks & Square::H4.to_bitboard() != 0, "h4 controlled");
+        assert!(attacks & Square::E4.to_bitboard() == 0, "rook does not control its own square");
+    }
+
+    #[test]
+    fn gen_attacks_includes_own_piece_square() {
+        // Own pawn on e6 blocks the rook — e6 is still controlled, e7 is not
+        let attacks = attacks_for("8/8/4P3/8/4R3/8/8/8 w - - 0 1");
+        assert!(attacks & Square::E5.to_bitboard() != 0, "e5 controlled");
+        assert!(attacks & Square::E6.to_bitboard() != 0, "e6 controlled (blocker square)");
+        assert!(attacks & Square::E7.to_bitboard() == 0, "e7 not controlled (behind own piece)");
+    }
+
+    #[test]
+    fn gen_attacks_union_of_two_rooks() {
+        // Rooks on a1 and h8 — no shared rank/file, so they don't block each other
+        // a1 attacks 14, h8 attacks 14, overlap = {h1, a8} → union = 26
+        let attacks = attacks_for("7R/8/8/8/8/8/8/R7 w - - 0 1");
+        assert_eq!(attacks.count_ones(), 26);
+        assert!(attacks & Square::A8.to_bitboard() != 0, "a8 controlled by a1 rook");
+        assert!(attacks & Square::H1.to_bitboard() != 0, "h1 controlled by both rooks");
+        assert!(attacks & Square::H8.to_bitboard() == 0, "h8 not in attacks (rook's own square)");
+        assert!(attacks & Square::A1.to_bitboard() == 0, "a1 not in attacks (rook's own square)");
+    }
+
+    #[test]
+    fn gen_attacks_black_rooks() {
+        // Black rook on e4, black to move
+        let attacks = attacks_for("8/8/8/8/4r3/8/8/8 b - - 0 1");
+        assert_eq!(attacks.count_ones(), 14);
+        assert!(attacks & Square::E1.to_bitboard() != 0);
+        assert!(attacks & Square::E8.to_bitboard() != 0);
     }
 }
