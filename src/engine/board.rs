@@ -518,4 +518,41 @@ impl Board {
             (Piece::King, Color::Black) => self.black_kings &= !bit,
         }
     }
+
+    pub fn make_squares_move(
+        &mut self,
+        from: Square,
+        to: Square,
+        promotion: Option<Piece>,
+    ) -> Result<IrreversibleState, String> {
+        let (piece, _) = self
+            .get_piece_at(from)
+            .ok_or_else(|| format!("no piece at {from}"))?;
+
+        let color = self.get_current_player_color();
+
+        let mv = if let Some(promo) = promotion {
+            if self.get_piece_at(to).is_some() {
+                Move::promote_capture(from, to, promo)
+            } else {
+                Move::promote(from, to, promo)
+            }
+        } else if piece == Piece::King && (to.file() as i32 - from.file() as i32).abs() == 2 {
+            if to.file() > from.file() {
+                Move::kingside_castle(color)
+            } else {
+                Move::queenside_castle(color)
+            }
+        } else if piece == Piece::Pawn && Some(to) == self.en_passant_square {
+            Move::en_passant(from, to)
+        } else if piece == Piece::Pawn && (to.to_index() as i32 - from.to_index() as i32).abs() == 16 {
+            Move::double_pawn_push(from, to)
+        } else if self.get_piece_at(to).is_some() {
+            Move::capture(from, to, piece)
+        } else {
+            Move::quiet(from, to, piece)
+        };
+
+        Ok(self.make_move(mv))
+    }
 }

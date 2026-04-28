@@ -1,3 +1,7 @@
+mod engine;
+mod uci;
+
 fn main() {
-    println!("Hello, world!");
+    let mut engine = engine::Engine::new();
+    uci::run(&mut engine);
 }
