@@ -1,5 +1,6 @@
 use std::default;
 
+use crate::engine::board;
 use crate::engine::mv::{IrreversibleState, Move, MoveKind};
 use crate::engine::piece::{Color, Piece};
 use crate::engine::square::Square;
@@ -59,14 +60,16 @@ pub struct Board {
 
     halfmove_clock: u8,
     fullmove_number: u8,
+    board_eval_cache: i32,
     white_to_move: bool,
     en_passant_square: Option<Square>,
     castling_rights: CastlingRights,
+
 }
 
 impl Board {
     pub fn new() -> Board {
-        Board {
+        let mut board = Board {
             white_pawns: 0x000000000000FF00,
             white_knights: 0x0000000000000042,
             white_bishops: 0x0000000000000024,
@@ -83,6 +86,7 @@ impl Board {
 
             halfmove_clock: 0,
             fullmove_number: 0,
+            board_eval_cache: 0,
             white_to_move: true,
             en_passant_square: None,
             castling_rights: CastlingRights(
@@ -91,7 +95,9 @@ impl Board {
                     | CastlingRights::BLACK_KINGSIDE
                     | CastlingRights::BLACK_QUEENSIDE,
             ),
-        }
+        };
+        board.board_eval_cache = board.evaluate();
+        board
     }
 
     pub fn from_fen(fen: &str) -> Result<Board, String> {
@@ -160,6 +166,8 @@ impl Board {
         board.fullmove_number = words[5]
             .parse::<u8>()
             .map_err(|_| "Invalid FEN: invalid fullmove number")?;
+
+        board.board_eval_cache = board.evaluate();
 
         Ok(board)
     }
@@ -406,6 +414,7 @@ impl Board {
         };
         self.fullmove_number += if self.white_to_move { 0 } else { 1 };
         self.white_to_move = !self.white_to_move;
+        self.board_eval_cache += self.incremental_evaluate(mv);
         irreversibile_state
     }
 
@@ -461,6 +470,7 @@ impl Board {
                 self.move_piece(mv.piece(), color, mv.to(), mv.from());
             }
         }
+        self.board_eval_cache -= self.incremental_evaluate(mv);
     }
 
     fn move_piece(&mut self, piece: Piece, color: Color, from: Square, to: Square) {
@@ -554,5 +564,101 @@ impl Board {
         };
 
         Ok(self.make_move(mv))
+    }
+
+    fn evaluate(&mut self) -> i32 {
+        let mut score = 0;
+        for color in [Color::White, Color::Black] {
+            for piece in Piece::ALL {
+                let count = self.get_bitboard_for_piece(piece, color).count_ones() as i32;
+                let value = Piece::value(piece);
+                if color == Color::White {
+                    score += count * value;
+                } else {
+                    score -= count * value;
+                }
+            }
+        }
+        score
+    }
+
+    fn incremental_evaluate(&mut self, mv: Move) -> i32 {
+        match mv.kind() {
+            MoveKind::Promotion(promo) => {
+                let delta = if self.get_current_player_color() == Color::White {
+                    promo.value() - Piece::Pawn.value()
+                } else {
+                    Piece::Pawn.value() - promo.value()
+                };
+                self.board_eval_cache + delta
+            }
+            MoveKind::Capture => {
+                let captured_piece = self.get_piece_at(mv.to()).unwrap().0;
+                let captured_value = captured_piece.value();
+                if self.get_current_player_color() == Color::White {
+                    self.board_eval_cache + captured_value
+                } else {
+                    self.board_eval_cache - captured_value
+                }
+            }
+            _ => self.board_eval_cache,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::mv::Move;
+    use crate::engine::square::Square;
+
+    #[test]
+    fn evaluate_starting_position_is_zero() {
+        let board = Board::new();
+        assert_eq!(board.board_eval_cache, 0);
+    }
+
+    #[test]
+    fn evaluate_white_up_a_pawn() {
+        // Black is missing one pawn
+        let board = Board::from_fen("rnbqkbnr/ppppppp1/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        assert_eq!(board.board_eval_cache, 100);
+    }
+
+    #[test]
+    fn evaluate_black_up_a_queen() {
+        // White is missing its queen
+        let board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1").unwrap();
+        assert_eq!(board.board_eval_cache, -900);
+    }
+
+    #[test]
+    fn incremental_evaluate_quiet_move_unchanged() {
+        let mut board = Board::new();
+        let mv = Move::quiet(Square::E2, Square::E4, Piece::Pawn);
+        let incremental = board.incremental_evaluate(mv);
+        assert_eq!(incremental, board.board_eval_cache);
+    }
+
+    #[test]
+    fn incremental_evaluate_white_capture_matches_full_eval() {
+        // White pawn on e5 can capture black pawn on d6
+        let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k w - - 0 1").unwrap();
+        let mv = Move::capture(Square::E5, Square::D6, Piece::Pawn);
+        let incremental = board.incremental_evaluate(mv);
+        board.make_move(mv);
+        let full = board.evaluate();
+        assert_eq!(incremental, full);
+    }
+
+    #[test]
+    fn incremental_evaluate_black_capture_matches_full_eval() {
+        // Black pawn on d6 can capture white pawn on e5
+        let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k b - - 0 1").unwrap();
+        let mv = Move::capture(Square::D6, Square::E5, Piece::Pawn);
+        let incremental = board.incremental_evaluate(mv);
+        board.make_move(mv);
+        let full = board.evaluate();
+        assert_eq!(incremental, full);
     }
 }
