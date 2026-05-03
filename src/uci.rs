@@ -1,7 +1,7 @@
-use std::io::{self, BufRead};
-use crate::engine::{ChessEngine, SearchParams, SquareMove};
 use crate::engine::piece::Piece;
 use crate::engine::square::Square;
+use crate::engine::{ChessEngine, SearchParams, SquareMove};
+use std::io::{self, BufRead};
 
 pub fn run(engine: &mut impl ChessEngine) {
     let stdin = io::stdin();
@@ -23,7 +23,13 @@ pub fn run(engine: &mut impl ChessEngine) {
         } else if line.starts_with("position") {
             handle_position(engine, line);
         } else if line.starts_with("go") {
-            engine.start_search(parse_go(line));
+            let rx = engine.start_search(parse_go(line));
+            std::thread::spawn(move || {
+                match rx.recv().ok().flatten() {
+                    Some(mv) => println!("bestmove {}", mv),
+                    None => println!("bestmove 0000"),
+                }
+            });
         } else if line == "stop" {
             engine.stop();
         } else if line == "ponderhit" {
@@ -84,7 +90,11 @@ fn parse_move(s: &str) -> Option<SquareMove> {
     } else {
         None
     };
-    Some(SquareMove { from, to, promotion })
+    Some(SquareMove {
+        from,
+        to,
+        promotion,
+    })
 }
 
 fn parse_go(line: &str) -> SearchParams {
@@ -104,15 +114,15 @@ fn parse_go(line: &str) -> SearchParams {
 
     while let Some(token) = tokens.next() {
         match token {
-            "depth"    => params.depth    = tokens.next().and_then(|v| v.parse().ok()),
+            "depth" => params.depth = tokens.next().and_then(|v| v.parse().ok()),
             "movetime" => params.movetime = tokens.next().and_then(|v| v.parse().ok()),
-            "wtime"    => params.wtime    = tokens.next().and_then(|v| v.parse().ok()),
-            "btime"    => params.btime    = tokens.next().and_then(|v| v.parse().ok()),
-            "winc"     => params.winc     = tokens.next().and_then(|v| v.parse().ok()),
-            "binc"     => params.binc     = tokens.next().and_then(|v| v.parse().ok()),
+            "wtime" => params.wtime = tokens.next().and_then(|v| v.parse().ok()),
+            "btime" => params.btime = tokens.next().and_then(|v| v.parse().ok()),
+            "winc" => params.winc = tokens.next().and_then(|v| v.parse().ok()),
+            "binc" => params.binc = tokens.next().and_then(|v| v.parse().ok()),
             "infinite" => params.infinite = true,
-            "ponder"   => params.ponder   = true,
-            _          => {}
+            "ponder" => params.ponder = true,
+            _ => {}
         }
     }
 
@@ -122,8 +132,10 @@ fn parse_go(line: &str) -> SearchParams {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::square::Square;
     use crate::engine::piece::Piece;
+    use crate::engine::square::Square;
+    use crate::engine::mv::Move;
+    use std::sync::mpsc::Receiver;
 
     struct MockEngine {
         last_fen: Option<String>,
@@ -148,14 +160,25 @@ mod tests {
     }
 
     impl ChessEngine for MockEngine {
-        fn new_game(&mut self) { self.new_game_called = true; }
+        fn new_game(&mut self) {
+            self.new_game_called = true;
+        }
         fn set_position(&mut self, fen: Option<&str>, moves: &[SquareMove]) {
             self.last_fen = fen.map(String::from);
             self.last_moves = moves.iter().map(|m| (m.from, m.to, m.promotion)).collect();
         }
-        fn start_search(&mut self, params: SearchParams) { self.last_search = Some(params); }
-        fn stop(&mut self) { self.stop_called = true; }
-        fn ponderhit(&mut self) { self.ponderhit_called = true; }
+        fn start_search(&mut self, params: SearchParams) -> Receiver<Option<Move>> {
+            self.last_search = Some(params);
+            let (tx, rx) = std::sync::mpsc::channel();
+            tx.send(None).ok();
+            rx
+        }
+        fn stop(&mut self) {
+            self.stop_called = true;
+        }
+        fn ponderhit(&mut self) {
+            self.ponderhit_called = true;
+        }
     }
 
     // --- parse_move ---

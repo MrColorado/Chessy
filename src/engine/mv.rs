@@ -1,6 +1,7 @@
 use crate::engine::board::CastlingRights;
 use crate::engine::piece::{Color, Piece};
 use crate::engine::square::Square;
+use std::fmt;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum MoveKind {
@@ -87,6 +88,16 @@ impl Move {
             _ => None,
         }
     }
+
+}
+
+impl fmt::Display for Move {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.promotion() {
+            Some(p) => write!(f, "{}{}{}", self.from, self.to, p.symbol().to_lowercase()),
+            None    => write!(f, "{}{}", self.from, self.to),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -116,5 +127,14 @@ impl Movelist {
 
     pub fn as_slice(&self) -> &[Move] {
         &self.moves[..self.count]
+    }
+}
+
+impl IntoIterator for Movelist {
+    type Item = Move;
+    type IntoIter = std::iter::Take<std::array::IntoIter<Move, 256>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.moves.into_iter().take(self.count)
     }
 }

@@ -1,6 +1,3 @@
-use std::default;
-
-use crate::engine::board;
 use crate::engine::mv::{IrreversibleState, Move, MoveKind};
 use crate::engine::piece::{Color, Piece};
 use crate::engine::square::Square;
@@ -208,6 +205,10 @@ impl Board {
         self.fullmove_number
     }
 
+    pub fn get_board_evaluation(&self) -> i32 {
+        self.board_eval_cache
+    }
+
     pub fn get_king_square(&self, color: Color) -> Square {
         let king_bb = self.get_bitboard_for_piece(Piece::King, color);
         Square(king_bb.trailing_zeros() as u8)
@@ -352,6 +353,8 @@ impl Board {
             captured_piece,
         };
 
+        self.board_eval_cache += self.incremental_evaluate(mv);
+
         let color = self.get_current_player_color();
         let opponent_color = self.get_opponent_color();
         match mv.kind() {
@@ -414,7 +417,6 @@ impl Board {
         };
         self.fullmove_number += if self.white_to_move { 0 } else { 1 };
         self.white_to_move = !self.white_to_move;
-        self.board_eval_cache += self.incremental_evaluate(mv);
         irreversibile_state
     }
 
@@ -585,23 +587,22 @@ impl Board {
     fn incremental_evaluate(&mut self, mv: Move) -> i32 {
         match mv.kind() {
             MoveKind::Promotion(promo) => {
-                let delta = if self.get_current_player_color() == Color::White {
+                if self.get_current_player_color() == Color::White {
                     promo.value() - Piece::Pawn.value()
                 } else {
                     Piece::Pawn.value() - promo.value()
-                };
-                self.board_eval_cache + delta
+                }
             }
             MoveKind::Capture => {
                 let captured_piece = self.get_piece_at(mv.to()).unwrap().0;
                 let captured_value = captured_piece.value();
                 if self.get_current_player_color() == Color::White {
-                    self.board_eval_cache + captured_value
+                    captured_value
                 } else {
-                    self.board_eval_cache - captured_value
+                    -captured_value
                 }
             }
-            _ => self.board_eval_cache,
+            _ => 0,
         }
     }
 }
