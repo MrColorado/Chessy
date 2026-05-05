@@ -1,5 +1,3 @@
-use crate::engine::piece::Piece;
-use crate::engine::square::Square;
 use crate::engine::{ChessEngine, SearchParams, SquareMove};
 use std::io::{self, BufRead};
 
@@ -13,7 +11,7 @@ pub fn run(engine: &mut impl ChessEngine) {
         let line = line.trim();
 
         if line == "uci" {
-            println!("id name Chessy");
+            println!("id name ChessiumX");
             println!("id author MrColorado");
             println!("uciok");
         } else if line == "isready" {
@@ -67,35 +65,12 @@ fn handle_position(engine: &mut impl ChessEngine, line: &str) {
 
     let moves: Vec<SquareMove> = tokens[moves_start..]
         .iter()
-        .filter_map(|&s| parse_move(s))
+        .filter_map(|&s| SquareMove::from_uci(s))
         .collect();
 
     engine.set_position(fen.as_deref(), &moves);
 }
 
-fn parse_move(s: &str) -> Option<SquareMove> {
-    if s.len() < 4 || s.len() > 5 {
-        return None;
-    }
-    let from = Square::from_str(&s[0..2])?;
-    let to = Square::from_str(&s[2..4])?;
-    let promotion = if s.len() == 5 {
-        Some(match s.as_bytes()[4] {
-            b'q' => Piece::Queen,
-            b'r' => Piece::Rook,
-            b'b' => Piece::Bishop,
-            b'n' => Piece::Knight,
-            _ => return None,
-        })
-    } else {
-        None
-    };
-    Some(SquareMove {
-        from,
-        to,
-        promotion,
-    })
-}
 
 fn parse_go(line: &str) -> SearchParams {
     let mut params = SearchParams {
@@ -135,6 +110,7 @@ mod tests {
     use crate::engine::piece::Piece;
     use crate::engine::square::Square;
     use crate::engine::mv::Move;
+    use crate::engine::SquareMove;
     use std::sync::mpsc::Receiver;
 
     struct MockEngine {
@@ -185,7 +161,7 @@ mod tests {
 
     #[test]
     fn parse_move_quiet() {
-        let mv = parse_move("e2e4").unwrap();
+        let mv = SquareMove::from_uci("e2e4").unwrap();
         assert_eq!(mv.from, Square::E2);
         assert_eq!(mv.to, Square::E4);
         assert_eq!(mv.promotion, None);
@@ -193,7 +169,7 @@ mod tests {
 
     #[test]
     fn parse_move_promotion() {
-        let mv = parse_move("e7e8q").unwrap();
+        let mv = SquareMove::from_uci("e7e8q").unwrap();
         assert_eq!(mv.from, Square::E7);
         assert_eq!(mv.to, Square::E8);
         assert_eq!(mv.promotion, Some(Piece::Queen));
@@ -201,18 +177,18 @@ mod tests {
 
     #[test]
     fn parse_move_all_promotion_pieces() {
-        assert_eq!(parse_move("a7a8q").unwrap().promotion, Some(Piece::Queen));
-        assert_eq!(parse_move("a7a8r").unwrap().promotion, Some(Piece::Rook));
-        assert_eq!(parse_move("a7a8b").unwrap().promotion, Some(Piece::Bishop));
-        assert_eq!(parse_move("a7a8n").unwrap().promotion, Some(Piece::Knight));
+        assert_eq!(SquareMove::from_uci("a7a8q").unwrap().promotion, Some(Piece::Queen));
+        assert_eq!(SquareMove::from_uci("a7a8r").unwrap().promotion, Some(Piece::Rook));
+        assert_eq!(SquareMove::from_uci("a7a8b").unwrap().promotion, Some(Piece::Bishop));
+        assert_eq!(SquareMove::from_uci("a7a8n").unwrap().promotion, Some(Piece::Knight));
     }
 
     #[test]
     fn parse_move_invalid() {
-        assert!(parse_move("e2").is_none());
-        assert!(parse_move("e2e4e5f").is_none());
-        assert!(parse_move("z9z9").is_none());
-        assert!(parse_move("e7e8x").is_none());
+        assert!(SquareMove::from_uci("e2").is_none());
+        assert!(SquareMove::from_uci("e2e4e5f").is_none());
+        assert!(SquareMove::from_uci("z9z9").is_none());
+        assert!(SquareMove::from_uci("e7e8x").is_none());
     }
 
     // --- handle_position ---

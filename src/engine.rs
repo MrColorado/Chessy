@@ -25,6 +25,28 @@ pub struct SquareMove {
     pub promotion: Option<Piece>,
 }
 
+impl SquareMove {
+    pub fn from_uci(s: &str) -> Option<SquareMove> {
+        if s.len() < 4 || s.len() > 5 {
+            return None;
+        }
+        let from = Square::from_str(&s[0..2])?;
+        let to = Square::from_str(&s[2..4])?;
+        let promotion = if s.len() == 5 {
+            Some(match s.as_bytes()[4] {
+                b'q' => Piece::Queen,
+                b'r' => Piece::Rook,
+                b'b' => Piece::Bishop,
+                b'n' => Piece::Knight,
+                _ => return None,
+            })
+        } else {
+            None
+        };
+        Some(SquareMove { from, to, promotion })
+    }
+}
+
 pub enum TimeControl {
     Depth(u32),
     MoveTime(u64),
