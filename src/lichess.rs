@@ -12,6 +12,8 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 
+use tokio::sync::mpsc;
+
 use crate::engine::{ChessEngine, Engine, SearchParams, SquareMove};
 use crate::engine::piece::Color;
 
@@ -35,6 +37,8 @@ enum LichessEvent {
 struct ChallengeInfo {
     id: String,
     variant: Variant,
+    #[serde(default)]
+    direction: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,14 +113,16 @@ struct BotState {
     connected: AtomicBool,
     auto_accept: Mutex<bool>,
     active_games: Mutex<HashSet<String>>,
+    max_games: usize,
 }
 
 impl Default for BotState {
     fn default() -> Self {
-        BotState {
+        BotState {  
             connected: AtomicBool::new(false),
-            auto_accept: Mutex::new(false),
+            auto_accept: Mutex::new(true),
             active_games: Mutex::new(HashSet::new()),
+            max_games: 1,
         }
     }
 }
@@ -148,7 +154,7 @@ impl LichessClient {
                 .send()
                 .await?;
             if resp.status().as_u16() == 429 {
-                eprintln!("[lichess] rate-limited on GET {path}, sleeping 60s");
+                log::warn!("[lichess] rate-limited on GET {path}, sleeping 60s");
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 continue;
             }
@@ -157,20 +163,31 @@ impl LichessClient {
     }
 
     async fn post_empty(&self, path: &str) -> anyhow::Result<()> {
+        let mut attempts = 0u32;
         loop {
-            let resp = self
+            let result = self
                 .http
                 .post(format!("https://lichess.org{path}"))
                 .bearer_auth(&self.token)
                 .send()
-                .await?;
-            if resp.status().as_u16() == 429 {
-                eprintln!("[lichess] rate-limited on POST {path}, sleeping 60s");
-                tokio::time::sleep(Duration::from_secs(60)).await;
-                continue;
+                .await;
+            match result {
+                Err(e) if e.is_request() && attempts < 3 => {
+                    attempts += 1;
+                    log::warn!("[lichess] transient send error on POST {path} (attempt {attempts}): {e}");
+                    tokio::time::sleep(Duration::from_millis(500 * attempts as u64)).await;
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+                Ok(resp) if resp.status().as_u16() == 429 => {
+                    log::warn!("[lichess] rate-limited on POST {path}, sleeping 60s");
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+                Ok(resp) => {
+                    resp.error_for_status()?;
+                    return Ok(());
+                }
             }
-            resp.error_for_status()?;
-            return Ok(());
         }
     }
 
@@ -188,7 +205,7 @@ impl LichessClient {
                 .send()
                 .await?;
             if resp.status().as_u16() == 429 {
-                eprintln!("[lichess] rate-limited on POST {path}, sleeping 60s");
+                log::warn!("[lichess] rate-limited on POST {path}, sleeping 60s");
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 continue;
             }
@@ -221,7 +238,7 @@ impl LichessClient {
                 ],
             )
             .await?;
-        body["challenge"]["id"]
+        body["id"]
             .as_str()
             .map(String::from)
             .ok_or_else(|| anyhow::anyhow!("unexpected challenge response: {body}"))
@@ -285,12 +302,14 @@ fn is_game_over(status: &str) -> bool {
     )
 }
 
-async fn handle_state(
-    client: &LichessClient,
-    game_id: &str,
+// Spawns a search in a blocking thread and sends the result into `tx`.
+// Returns false (and does nothing) if it is not our turn.
+fn start_search_task(
     our_color: Color,
     state: &GameState,
-) -> anyhow::Result<()> {
+    game_id: &str,
+    tx: mpsc::UnboundedSender<Option<String>>,
+) -> bool {
     let moves: Vec<&str> = if state.moves.is_empty() {
         vec![]
     } else {
@@ -303,7 +322,11 @@ async fn handle_state(
     };
 
     if !our_turn {
-        return Ok(());
+        return false;
+    }
+
+    if let Some(last) = moves.last() {
+        log::debug!("[game {game_id}] opponent played {last}");
     }
 
     let parsed_moves: Vec<SquareMove> = moves
@@ -315,8 +338,9 @@ async fn handle_state(
     let btime = state.btime;
     let winc = state.winc;
     let binc = state.binc;
+    let game_id_owned = game_id.to_string();
 
-    let best_move_str = tokio::task::spawn_blocking(move || -> Option<String> {
+    tokio::task::spawn_blocking(move || {
         let mut engine = Engine::new();
         engine.set_position(None, &parsed_moves);
         let params = SearchParams {
@@ -329,24 +353,16 @@ async fn handle_state(
             infinite: false,
             ponder: false,
         };
+        log::debug!(
+            "[game {game_id_owned}] searching — wtime={wtime}ms btime={btime}ms winc={winc}ms binc={binc}ms moves={}",
+            parsed_moves.len()
+        );
         let rx = engine.start_search(params);
-        rx.recv().ok().flatten().map(|mv| mv.to_string())
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("engine panicked: {e}"))?;
+        let mv = rx.recv().ok().flatten().map(|mv| mv.to_string());
+        let _ = tx.send(mv);
+    });
 
-    match best_move_str {
-        Some(mv) => {
-            eprintln!("[game {game_id}] playing {mv}");
-            client.make_move(game_id, &mv).await?;
-        }
-        None => {
-            eprintln!("[game {game_id}] engine returned no move, resigning");
-            client.resign_game(game_id).await?;
-        }
-    }
-
-    Ok(())
+    true
 }
 
 async fn play_game(
@@ -368,11 +384,11 @@ async fn play_game(
         .insert(game_id.clone());
 
     if let Err(e) = play_game_inner(&client, &game_id, our_color).await {
-        eprintln!("[game {game_id}] error: {e:#}");
+        log::error!("[game {game_id}] error: {e:#}");
     }
 
     state.active_games.lock().unwrap().remove(&game_id);
-    eprintln!("[game {game_id}] done");
+    log::info!("[game {game_id}] done");
 }
 
 async fn play_game_inner(
@@ -396,31 +412,49 @@ async fn play_game_inner(
         _ => anyhow::bail!("expected gameFull as first event, got: {first_line}"),
     };
 
-    handle_state(client, game_id, our_color, &initial_state).await?;
+    let (move_tx, mut move_rx) = mpsc::unbounded_channel::<Option<String>>();
+    let mut searching = start_search_task(our_color, &initial_state, game_id, move_tx.clone());
 
     loop {
-        let line = match next_json_line(&mut buf, &mut stream).await? {
-            Some(l) => l,
-            None => break,
-        };
-
-        let event: GameEvent = match serde_json::from_str(&line) {
-            Ok(e) => e,
-            Err(e) => {
-                eprintln!("[game {game_id}] parse error ({e}): {line}");
-                continue;
-            }
-        };
-
-        match event {
-            GameEvent::GameState(gs) => {
-                if is_game_over(&gs.status) {
-                    eprintln!("[game {game_id}] over: {}", gs.status);
-                    break;
+        tokio::select! {
+            result = move_rx.recv(), if searching => {
+                searching = false;
+                match result.flatten() {
+                    Some(mv) => {
+                        log::info!("[game {game_id}] playing {mv}");
+                        client.make_move(game_id, &mv).await?;
+                    }
+                    None => {
+                        log::warn!("[game {game_id}] engine returned no move, resigning");
+                        client.resign_game(game_id).await?;
+                    }
                 }
-                handle_state(client, game_id, our_color, &gs).await?;
             }
-            _ => {}
+            line = next_json_line(&mut buf, &mut stream) => {
+                let line = match line? {
+                    Some(l) => l,
+                    None => break,
+                };
+
+                let event: GameEvent = match serde_json::from_str(&line) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!("[game {game_id}] parse error ({e}): {line}");
+                        continue;
+                    }
+                };
+
+                match event {
+                    GameEvent::GameState(gs) => {
+                        if is_game_over(&gs.status) {
+                            log::info!("[game {game_id}] over: {}", gs.status);
+                            break;
+                        }
+                        searching = start_search_task(our_color, &gs, game_id, move_tx.clone());
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -449,7 +483,7 @@ async fn run_event_loop(
         let event: LichessEvent = match serde_json::from_str(&line) {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("[lichess] unrecognised event ({e}): {line}");
+                log::warn!("[lichess] unrecognised event ({e}): {line}");
                 continue;
             }
         };
@@ -457,29 +491,29 @@ async fn run_event_loop(
         match event {
             LichessEvent::Challenge { challenge } => {
                 let auto = *state.auto_accept.lock().unwrap();
-                let busy = !state.active_games.lock().unwrap().is_empty();
-                if auto && !busy && challenge.variant.key == "standard" {
-                    eprintln!("[lichess] accepting challenge {}", challenge.id);
+                let busy = state.active_games.lock().unwrap().len() >= state.max_games;
+                if auto && !busy && challenge.variant.key == "standard" && challenge.direction != "out" {
+                    log::info!("[lichess] accepting challenge {}", challenge.id);
                     if let Err(e) = client.accept_challenge(&challenge.id).await {
-                        eprintln!("[lichess] accept failed: {e:#}");
+                        log::error!("[lichess] accept failed: {e:#}");
                     }
                 } else if busy {
-                    eprintln!("[lichess] ignoring challenge {} (already in a game)", challenge.id);
+                    log::info!("[lichess] ignoring challenge {} (already in a game)", challenge.id);
                 }
             }
             LichessEvent::GameStart { game } => {
                 let busy = !state.active_games.lock().unwrap().is_empty();
                 if busy {
-                    eprintln!("[lichess] game {} started but already busy, resigning", game.game_id);
+                    log::warn!("[lichess] game {} started but already at max games, resigning", game.game_id);
                     let c = client.clone();
                     let id = game.game_id;
                     tokio::spawn(async move {
                         if let Err(e) = c.resign_game(&id).await {
-                            eprintln!("[lichess] resign failed: {e:#}");
+                            log::error!("[lichess] resign failed: {e:#}");
                         }
                     });
                 } else {
-                    eprintln!("[lichess] game started: {} as {}", game.game_id, game.color);
+                    log::info!("[lichess] game started: {} as {}", game.game_id, game.color);
                     let c = client.clone();
                     let s = state.clone();
                     tokio::spawn(async move {
@@ -572,13 +606,13 @@ async fn serve_http(client: Arc<LichessClient>, state: Arc<BotState>, port: u16)
     let listener = match tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[http] failed to bind port {port}: {e}");
+            log::error!("[http] failed to bind port {port}: {e}");
             return;
         }
     };
-    eprintln!("[http] listening on http://127.0.0.1:{port}");
+    log::info!("[http] listening on http://127.0.0.1:{port}");
     if let Err(e) = axum::serve(listener, app).await {
-        eprintln!("[http] server error: {e}");
+        log::error!("[http] server error: {e}");
     }
 }
 
@@ -586,22 +620,24 @@ async fn serve_http(client: Arc<LichessClient>, state: Arc<BotState>, port: u16)
 // Public entry point
 // ---------------------------------------------------------------------------
 
-pub async fn run(token: String, port: u16) -> anyhow::Result<()> {
+pub async fn run(token: String, port: u16, max_games: usize) -> anyhow::Result<()> {
     let client = Arc::new(LichessClient::new(token));
-    let state = Arc::new(BotState::default());
+    let state = Arc::new(BotState { max_games, ..BotState::default() });
 
     tokio::spawn(serve_http(client.clone(), state.clone(), port));
 
     loop {
         match run_event_loop(&client, &state).await {
-            Ok(()) => break,
+            Ok(()) => {
+                log::warn!("[lichess] event stream closed, reconnecting in 5s");
+                state.connected.store(false, Ordering::Relaxed);
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
             Err(e) => {
-                eprintln!("[lichess] event stream error: {e:#}, reconnecting in 5s");
+                log::error!("[lichess] event stream error: {e:#}, reconnecting in 5s");
                 state.connected.store(false, Ordering::Relaxed);
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         }
     }
-
-    Ok(())
 }

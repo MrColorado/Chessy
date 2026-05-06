@@ -135,6 +135,12 @@ impl ChessEngine for Engine {
         match params.time_control(self.board.get_current_player_color()) {
             TimeControl::Clock { time_ms, inc_ms } => {
                 let search_time = time_ms / 20 + inc_ms / 2;
+                log::debug!(
+                    "[search] searching for {search_time}ms ({:.1}s) — time={time_ms}ms ({:.1}s) inc={inc_ms}ms ({:.1}s)",
+                    search_time as f64 / 1000.0,
+                    time_ms as f64 / 1000.0,
+                    inc_ms as f64 / 1000.0,
+                );
                 let stop_timer = Arc::clone(&self.stop_flag);
                 let stop_search = Arc::clone(&self.stop_flag);
                 self.stop_flag.store(false, Ordering::Relaxed);

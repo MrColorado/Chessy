@@ -9,10 +9,14 @@ struct Args {
     /// Local HTTP control port
     #[arg(long, default_value = "8080")]
     port: u16,
+    /// Maximum number of concurrent games
+    #[arg(long, default_value = "1")]
+    max_games: usize,
 }
 
 fn main() -> anyhow::Result<()> {
+    env_logger::init();
     let args = Args::parse();
-    eprintln!("chess-lichess v{} on port {}", env!("APP_VERSION"), args.port);
-    tokio::runtime::Runtime::new()?.block_on(chess::lichess::run(args.token, args.port))
+    log::info!("chess-lichess {} on port {}", env!("APP_VERSION"), args.port);
+    tokio::runtime::Runtime::new()?.block_on(chess::lichess::run(args.token, args.port, args.max_games))
 }

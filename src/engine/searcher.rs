@@ -41,6 +41,9 @@ pub fn search(mut board: Board, stop_flag: Arc<AtomicBool>, tx: Sender<Option<Mo
         }
 
         best_move = best_move_at_depth;
+        if let Some(mv) = best_move_at_depth {
+            log::debug!("[search] depth {depth} best={mv} score={best_score_at_depth}");
+        }
         depth += 1;
     }
 }
