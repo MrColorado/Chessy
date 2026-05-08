@@ -25,6 +25,28 @@ pub struct SquareMove {
     pub promotion: Option<Piece>,
 }
 
+impl SquareMove {
+    pub fn from_uci(s: &str) -> Option<SquareMove> {
+        if s.len() < 4 || s.len() > 5 {
+            return None;
+        }
+        let from = Square::from_str(&s[0..2])?;
+        let to = Square::from_str(&s[2..4])?;
+        let promotion = if s.len() == 5 {
+            Some(match s.as_bytes()[4] {
+                b'q' => Piece::Queen,
+                b'r' => Piece::Rook,
+                b'b' => Piece::Bishop,
+                b'n' => Piece::Knight,
+                _ => return None,
+            })
+        } else {
+            None
+        };
+        Some(SquareMove { from, to, promotion })
+    }
+}
+
 pub enum TimeControl {
     Depth(u32),
     MoveTime(u64),
@@ -113,6 +135,12 @@ impl ChessEngine for Engine {
         match params.time_control(self.board.get_current_player_color()) {
             TimeControl::Clock { time_ms, inc_ms } => {
                 let search_time = time_ms / 20 + inc_ms / 2;
+                log::debug!(
+                    "[search] searching for {search_time}ms ({:.1}s) — time={time_ms}ms ({:.1}s) inc={inc_ms}ms ({:.1}s)",
+                    search_time as f64 / 1000.0,
+                    time_ms as f64 / 1000.0,
+                    inc_ms as f64 / 1000.0,
+                );
                 let stop_timer = Arc::clone(&self.stop_flag);
                 let stop_search = Arc::clone(&self.stop_flag);
                 self.stop_flag.store(false, Ordering::Relaxed);
