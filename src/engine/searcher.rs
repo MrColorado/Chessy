@@ -53,21 +53,32 @@ fn negamax(board: &mut Board, stop_flag: &AtomicBool, depth: i32, color_factor: 
         return 0;
     }
 
+    if board.get_halfmove_clock() >= 100 {
+        return 0;
+    }
+
     if depth == 0 {
         return color_factor * board.get_board_evaluation();
     }
 
+    let color = board.get_current_player_color();
     let mut best_score = i32::MIN + 1;
+    let mut has_legal_move = false;
     for mv in gen_moves(board) {
-        let moving_color = board.get_current_player_color();
         let state = board.make_move(mv);
-        if rule::is_in_check(board, moving_color) {
+        if rule::is_in_check(board, color) {
             board.unmake_move(mv, state);
             continue;
         }
+        has_legal_move = true;
         best_score = best_score.max(-negamax(board, stop_flag, depth - 1, -color_factor));
         board.unmake_move(mv, state);
     }
+
+    if !has_legal_move {
+        return if rule::is_in_check(board, color) { i32::MIN + 1 } else { 0 };
+    }
+
     best_score
 }
 
@@ -98,8 +109,20 @@ mod tests {
 
     #[test]
     fn mate_in_one_is_max_score() {
-        // Blanc joue Tb8# : roi noir en a8, roi blanc en a6, tour en b6
-        // Après Tb8+, noir n'a aucun coup légal → score maximal
-        assert_eq!(eval("k7/8/KR6/8/8/8/8/8 w - - 0 1", 2, 1), i32::MAX);
+        // Blanc joue Tb8# : pion a7 couvre b8, Ka6 couvre a7 et b7 → mat
+        assert_eq!(eval("k7/P7/KR6/8/8/8/8/8 w - - 0 1", 2, 1), i32::MAX);
+    }
+
+    #[test]
+    fn stalemate_scores_zero() {
+        // Noir à jouer, roi en a8, aucun coup légal mais pas en échec → nulle
+        // Ka6 et Qb6 piègent le roi sans l'attaquer directement
+        assert_eq!(eval("k7/8/KQ6/8/8/8/8/8 b - - 0 1", 1, -1), 0);
+    }
+
+    #[test]
+    fn fifty_move_rule_scores_zero() {
+        // Horloge à 100 demi-coups → nulle immédiate quelle que soit la position
+        assert_eq!(eval("k7/P7/KR6/8/8/8/8/8 w - - 100 1", 2, 1), 0);
     }
 }
