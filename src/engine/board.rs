@@ -61,7 +61,6 @@ pub struct Board {
     white_to_move: bool,
     en_passant_square: Option<Square>,
     castling_rights: CastlingRights,
-
 }
 
 impl Board {
@@ -206,7 +205,12 @@ impl Board {
     }
 
     pub fn get_board_evaluation(&self) -> i32 {
-        self.board_eval_cache
+        let board_eval = self.board_eval_cache;
+        if self.get_current_player_color() == Color::White {
+            board_eval
+        } else {
+            -board_eval
+        }
     }
 
     pub fn get_king_square(&self, color: Color) -> Square {

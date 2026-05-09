@@ -78,10 +78,10 @@ fn bench_search(c: &mut Criterion) {
     g.sample_size(10);
 
     g.bench_function("startpos/d3", |b| {
-        b.iter(|| negamax_bench(black_box(&mut startpos()), 3, 1))
+        b.iter(|| negamax_bench(black_box(&mut startpos()), 3))
     });
     g.bench_function("kiwipete/d3", |b| {
-        b.iter(|| negamax_bench(black_box(&mut kiwipete()), 3, 1))
+        b.iter(|| negamax_bench(black_box(&mut kiwipete()), 3))
     });
 
     g.finish();
