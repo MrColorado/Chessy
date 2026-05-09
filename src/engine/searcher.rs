@@ -48,6 +48,11 @@ pub fn search(mut board: Board, stop_flag: Arc<AtomicBool>, tx: Sender<Option<Mo
     }
 }
 
+pub fn negamax_bench(board: &mut Board, depth: i32, color_factor: i32) -> i32 {
+    let stop = AtomicBool::new(false);
+    negamax(board, &stop, depth, color_factor)
+}
+
 fn negamax(board: &mut Board, stop_flag: &AtomicBool, depth: i32, color_factor: i32) -> i32 {
     if stop_flag.load(Ordering::Relaxed) {
         return 0;

@@ -23,27 +23,27 @@ pub fn gen_legal_moves(board: &mut Board) -> Movelist {
     legal
 }
 
+pub fn perft(board: &mut Board, depth: u32) -> u64 {
+    if depth == 0 {
+        return 1;
+    }
+    let moves = gen_legal_moves(board);
+    if depth == 1 {
+        return moves.len() as u64;
+    }
+    let mut count = 0;
+    for &mv in moves.as_slice() {
+        let state = board.make_move(mv);
+        count += perft(board, depth - 1);
+        board.unmake_move(mv, state);
+    }
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::board::Board;
-
-    fn perft(board: &mut Board, depth: u32) -> u64 {
-        if depth == 0 {
-            return 1;
-        }
-        let moves = gen_legal_moves(board);
-        if depth == 1 {
-            return moves.len() as u64;
-        }
-        let mut count = 0;
-        for &mv in moves.as_slice() {
-            let state = board.make_move(mv);
-            count += perft(board, depth - 1);
-            board.unmake_move(mv, state);
-        }
-        count
-    }
 
     // Starting position — authoritative perft values
     #[test]
