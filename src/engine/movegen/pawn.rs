@@ -25,6 +25,10 @@ pub(super) fn gen_pawn_attacks(board: &Board, color: Color) -> BitBoard {
     attacks
 }
 
+pub(super) fn pawn_attack_from(sq: Square, color: Color) -> BitBoard {
+    pawn_sqare_attacks(sq, color)
+}
+
 fn add_pawn_targets(
     from: Square,
     targets: BitBoard,

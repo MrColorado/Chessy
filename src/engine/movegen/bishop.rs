@@ -40,6 +40,11 @@ pub(super) fn gen_bishop_attacks(board: &Board, color: Color) -> BitBoard {
     attacks
 }
 
+pub(super) fn bishop_attack_from(sq: Square, occupancy: BitBoard) -> BitBoard {
+  let table = get_bishop_table();
+  table.attacks(sq, occupancy)
+}
+
 // Compute the blocker mask for a bishop on `sq`.
 // Includes all squares on the same diagonal where a blocker could matter,
 // excluding the board edges (a piece on the edge can't block further).

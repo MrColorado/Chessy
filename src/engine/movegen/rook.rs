@@ -39,6 +39,11 @@ pub(super) fn gen_rook_attacks(board: &Board, color: Color) -> BitBoard {
     attacks
 }
 
+pub(super) fn rook_attack_from(sq: Square, occupancy: BitBoard) -> BitBoard {
+  let table = get_rook_table();
+  table.attacks(sq, occupancy)
+}
+
 // Compute the blocker mask for a rook on `sq`.
 // Includes all squares on the same rank/file where a blocker could matter,
 // excluding the board edges (a piece on the edge can't block further).

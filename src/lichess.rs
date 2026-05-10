@@ -492,7 +492,7 @@ async fn run_event_loop(
             LichessEvent::Challenge { challenge } => {
                 let auto = *state.auto_accept.lock().unwrap();
                 let busy = state.active_games.lock().unwrap().len() >= state.max_games;
-                if auto && !busy && challenge.variant.key == "standard" && challenge.direction != "out" {
+                if auto && !busy && challenge.variant.key == "standard" && challenge.direction == "in" {
                     log::info!("[lichess] accepting challenge {}", challenge.id);
                     if let Err(e) = client.accept_challenge(&challenge.id).await {
                         log::error!("[lichess] accept failed: {e:#}");

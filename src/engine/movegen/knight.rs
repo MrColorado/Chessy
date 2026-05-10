@@ -28,6 +28,10 @@ pub(super) fn gen_knight_attacks(board: &Board, color: Color) -> BitBoard {
     attacks
 }
 
+pub(super) fn knights_attack_from(sq: Square) -> BitBoard {
+    knight_targets(sq.to_bitboard())
+}
+
 fn knight_targets(pos: BitBoard) -> BitBoard {
     let mut target = (pos << 17) & NOT_A_FILE;
     target |= (pos << 15) & NOT_H_FILE;
@@ -42,6 +46,7 @@ fn knight_targets(pos: BitBoard) -> BitBoard {
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::square::Square;
     use super::*;
 
     fn moves_for(fen: &str) -> Movelist {
@@ -172,6 +177,30 @@ mod tests {
         assert!(attacks & Square::G6.to_bitboard() != 0);
         assert!(attacks & Square::F7.to_bitboard() != 0);
         assert_eq!(attacks.count_ones(), 4);
+    }
+
+    #[test]
+    fn knights_attack_from_center() {
+        let attacks = knights_attack_from(Square::D4);
+        assert_eq!(attacks.count_ones(), 8);
+    }
+
+    #[test]
+    fn knights_attack_from_corner_a1() {
+        let attacks = knights_attack_from(Square::A1);
+        assert_eq!(attacks.count_ones(), 2);
+        assert!(attacks & Square::B3.to_bitboard() != 0);
+        assert!(attacks & Square::C2.to_bitboard() != 0);
+    }
+
+    #[test]
+    fn knights_attack_from_edge_h4() {
+        let attacks = knights_attack_from(Square::H4);
+        assert_eq!(attacks.count_ones(), 4);
+        assert!(attacks & Square::G2.to_bitboard() != 0);
+        assert!(attacks & Square::F3.to_bitboard() != 0);
+        assert!(attacks & Square::F5.to_bitboard() != 0);
+        assert!(attacks & Square::G6.to_bitboard() != 0);
     }
 
     #[test]
