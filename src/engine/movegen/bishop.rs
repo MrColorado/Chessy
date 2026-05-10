@@ -27,10 +27,9 @@ pub(super) fn gen_bishop_moves(board: &Board, movelist: &mut Movelist) {
     }
 }
 
-pub(super) fn gen_bishop_attacks(board: &Board, color: Color) -> BitBoard {
+pub(super) fn gen_bishop_attacks(board: &Board, color: Color, occupancy: BitBoard) -> BitBoard {
     let table = get_bishop_table();
     let bishops = board.get_bitboard_for_piece(Piece::Bishop, color);
-    let occupancy = board.get_occupied_squares();
     let mut attacks = 0u64;
 
     for sq in extract_pieces_from_bitboard(bishops) {
@@ -40,10 +39,12 @@ pub(super) fn gen_bishop_attacks(board: &Board, color: Color) -> BitBoard {
     attacks
 }
 
+
 pub(super) fn bishop_attack_from(sq: Square, occupancy: BitBoard) -> BitBoard {
   let table = get_bishop_table();
   table.attacks(sq, occupancy)
 }
+
 
 // Compute the blocker mask for a bishop on `sq`.
 // Includes all squares on the same diagonal where a blocker could matter,
@@ -154,7 +155,7 @@ mod tests {
 
     fn attacks_for(fen: &str) -> BitBoard {
         let board = Board::from_fen(fen).expect("valid FEN");
-        gen_bishop_attacks(&board, board.get_current_player_color())
+        gen_bishop_attacks(&board, board.get_current_player_color(), board.get_occupied_squares())
     }
 
     #[test]

@@ -26,10 +26,9 @@ pub(super) fn gen_rook_moves(board: &Board, movelist: &mut Movelist) {
     }
 }
 
-pub(super) fn gen_rook_attacks(board: &Board, color: Color) -> BitBoard {
+pub(super) fn gen_rook_attacks(board: &Board, color: Color, occupancy: BitBoard) -> BitBoard {
     let table = get_rook_table();
     let rooks = board.get_bitboard_for_piece(Piece::Rook, color);
-    let occupancy = board.get_occupied_squares();
     let mut attacks = 0u64;
 
     for sq in extract_pieces_from_bitboard(rooks) {
@@ -142,7 +141,7 @@ mod tests {
 
     fn attacks_for(fen: &str) -> BitBoard {
         let board = Board::from_fen(fen).expect("valid FEN");
-        gen_rook_attacks(&board, board.get_current_player_color())
+        gen_rook_attacks(&board, board.get_current_player_color(), board.get_occupied_squares())
     }
 
 

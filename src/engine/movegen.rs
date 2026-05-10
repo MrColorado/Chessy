@@ -74,13 +74,14 @@ pub(super) fn add_capture_moves(
 }
 
 pub fn gen_attacks_for_color(board: &Board, color: Color) -> BitBoard {
+    let occupancy = board.get_occupied_squares();
     let mut attacks = 0u64;
     attacks |= gen_pawn_attacks(board, color);
     attacks |= gen_knight_attacks(board, color);
-    attacks |= gen_rook_attacks(board, color);
-    attacks |= gen_bishop_attacks(board, color);
-    attacks |= gen_queen_attacks(board, color);
     attacks |= gen_king_attacks(board, color);
+    attacks |= gen_rook_attacks(board, color, occupancy);
+    attacks |= gen_bishop_attacks(board, color, occupancy);
+    attacks |= gen_queen_attacks(board, color, occupancy);
     attacks
 }
 
@@ -95,20 +96,119 @@ pub fn gen_moves(board: &Board) -> Movelist {
     movelist
 }
 
+pub fn compute_danger_squares(board: &Board, color: Color) -> BitBoard{
+    let occ_no_king = board.get_occupied_squares() & !board.get_bitboard_for_piece(Piece::King, color);
+    let attacker_color = color.flip();
+    let mut dangers = 0u64;
+    dangers |= gen_pawn_attacks(board, attacker_color); 
+    dangers |= gen_knight_attacks(board, attacker_color);
+    dangers |= gen_king_attacks(board, attacker_color);
+    dangers |= gen_bishop_attacks(board, attacker_color, occ_no_king);
+    dangers |= gen_rook_attacks(board, attacker_color, occ_no_king);
+    dangers |= gen_queen_attacks(board, attacker_color, occ_no_king);
+    dangers
+}
+
 pub fn compute_checker(board: &Board, color: Color) -> BitBoard {
     let opponent_color = color.flip();
     let occupancy = board.get_occupied_squares();
     let king_bb = board.get_king_square(color);
     let mut checkers = 0u64;
 
-    checkers |= knights_attack_from(king_bb) & board.get_bitboard_for_piece(Piece::Knight, opponent_color);
     checkers |= pawn_attack_from(king_bb, color) & board.get_bitboard_for_piece(Piece::Pawn, opponent_color);
-    checkers |= rook_attack_from(king_bb, occupancy) & 
-        (board.get_bitboard_for_piece(Piece::Rook, opponent_color) | board.get_bitboard_for_piece(Piece::Queen, opponent_color));
+    checkers |= knights_attack_from(king_bb) & board.get_bitboard_for_piece(Piece::Knight, opponent_color);
     checkers |= bishop_attack_from(king_bb, occupancy) & 
         (board.get_bitboard_for_piece(Piece::Bishop, opponent_color) | board.get_bitboard_for_piece(Piece::Queen, opponent_color));
+    checkers |= rook_attack_from(king_bb, occupancy) & 
+        (board.get_bitboard_for_piece(Piece::Rook, opponent_color) | board.get_bitboard_for_piece(Piece::Queen, opponent_color));
 
     checkers
+}
+
+#[cfg(test)]
+mod danger_squares_tests {
+    use super::*;
+
+    fn dangers(fen: &str, color: Color) -> BitBoard {
+        let board = Board::from_fen(fen).expect("valid FEN");
+        compute_danger_squares(&board, color)
+    }
+
+    #[test]
+    fn pawn_attacks() {
+        // Black pawn on d5 attacks c4 and e4 — dangerous for White
+        let bb = dangers("8/8/8/3p4/8/8/8/4K3 b - - 0 1", Color::White);
+        assert!(bb & Square::C4.to_bitboard() != 0);
+        assert!(bb & Square::E4.to_bitboard() != 0);
+    }
+
+    #[test]
+    fn knight_attacks() {
+        // Black knight on d4 attacks b3, b5, c2, c6, e2, e6, f3, f5 — dangerous for White
+        let bb = dangers("8/8/8/8/3n4/8/8/4K3 b - - 0 1", Color::White);
+        assert!(bb & Square::B3.to_bitboard() != 0);
+        assert!(bb & Square::F5.to_bitboard() != 0);
+        assert!(bb & Square::C2.to_bitboard() != 0);
+        assert!(bb & Square::E6.to_bitboard() != 0);
+    }
+
+    #[test]
+    fn bishop_attacks() {
+        // Black bishop on c3 attacks b2, a1, d4, e5, f6, g7, h8, b4, a5, d2, e1 — dangerous for White
+        let bb = dangers("8/8/8/8/8/2b5/8/4K3 b - - 0 1", Color::White);
+        assert!(bb & Square::B2.to_bitboard() != 0);
+        assert!(bb & Square::E5.to_bitboard() != 0);
+        assert!(bb & Square::D4.to_bitboard() != 0);
+        assert!(bb & Square::A1.to_bitboard() != 0);
+    }
+
+    #[test]
+    fn rook_attacks() {
+        // Black rook on d4 attacks the whole d-file and 4th rank — dangerous for White
+        let bb = dangers("8/8/8/8/3r4/8/8/4K3 b - - 0 1", Color::White);
+        assert!(bb & Square::D1.to_bitboard() != 0);
+        assert!(bb & Square::D8.to_bitboard() != 0);
+        assert!(bb & Square::A4.to_bitboard() != 0);
+        assert!(bb & Square::H4.to_bitboard() != 0);
+    }
+
+    #[test]
+    fn queen_attacks() {
+        // Black queen on d4: combines rook + bishop rays — dangerous for White
+        let bb = dangers("8/8/8/8/3q4/8/8/4K3 b - - 0 1", Color::White);
+        assert!(bb & Square::D1.to_bitboard() != 0);
+        assert!(bb & Square::H8.to_bitboard() != 0);
+        assert!(bb & Square::A4.to_bitboard() != 0);
+        assert!(bb & Square::G7.to_bitboard() != 0);
+    }
+
+    #[test]
+    fn king_attacks() {
+        // Black king on e8 attacks d8, f8, d7, e7, f7 — dangerous for White
+        let bb = dangers("4k3/8/8/8/8/8/8/4K3 b - - 0 1", Color::White);
+        assert!(bb & Square::D7.to_bitboard() != 0);
+        assert!(bb & Square::E7.to_bitboard() != 0);
+        assert!(bb & Square::F7.to_bitboard() != 0);
+        assert!(bb & Square::D8.to_bitboard() != 0);
+        assert!(bb & Square::F8.to_bitboard() != 0);
+    }
+
+    #[test]
+    fn slider_xrays_through_own_king() {
+        // White king on e1; black rook on e8. The white king must be excluded from
+        // occupancy so the rook's ray continues through e1 — squares behind the
+        // king are still marked as dangerous, preventing the king from stepping there.
+        let bb = dangers("4r3/8/8/8/8/8/8/4K3 b - - 0 1", Color::White);
+        assert!(bb & Square::E1.to_bitboard() != 0);
+    }
+
+    #[test]
+    fn multiple_pieces_union() {
+        // Black rook on a1 and black bishop on h8: both rays should appear — dangerous for White
+        let bb = dangers("7b/8/8/8/8/8/8/r3K3 b - - 0 1", Color::White);
+        assert!(bb & Square::E1.to_bitboard() != 0); // rook on rank 1
+        assert!(bb & Square::G7.to_bitboard() != 0); // bishop diagonal
+    }
 }
 
 #[cfg(test)]

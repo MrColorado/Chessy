@@ -20,13 +20,13 @@ pub(super) fn gen_pawn_attacks(board: &Board, color: Color) -> BitBoard {
 
     let mut attacks = 0u64;
     for pos in extract_pieces_from_bitboard(pawns) {
-        attacks |= pawn_sqare_attacks(pos, color);
+        attacks |= pawn_square_attacks(pos, color);
     }
     attacks
 }
 
 pub(super) fn pawn_attack_from(sq: Square, color: Color) -> BitBoard {
-    pawn_sqare_attacks(sq, color)
+    pawn_square_attacks(sq, color)
 }
 
 fn add_pawn_targets(
@@ -111,7 +111,7 @@ fn pawn_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
     }
 }
 
-fn pawn_sqare_attacks(pos: Square, color: Color) -> BitBoard {
+fn pawn_square_attacks(pos: Square, color: Color) -> BitBoard {
     let pos_bb = pos.to_bitboard();
     match color {
         Color::White => {
