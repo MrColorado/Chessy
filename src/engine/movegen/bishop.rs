@@ -4,7 +4,7 @@ use crate::engine::board::{BitBoard, Board};
 use crate::engine::movegen::magic::MagicTable;
 use crate::engine::mv::Movelist;
 use crate::engine::piece::{Piece, Color};
-use crate::engine::square::Square;
+use crate::engine::square::{Square, BISHOP_DIRS};
 
 
 use super::{add_capture_moves, add_quiet_moves, extract_pieces_from_bitboard};
@@ -50,88 +50,30 @@ pub(super) fn bishop_attack_from(sq: Square, occupancy: BitBoard) -> BitBoard {
 // Includes all squares on the same diagonal where a blocker could matter,
 // excluding the board edges (a piece on the edge can't block further).
 fn bishop_blocker_mask(sq: Square) -> BitBoard {
-    let f = sq.file() as usize;
-    let r = sq.rank() as usize;
     let mut mask = 0u64;
-
-    // North - East
-    for i in 1..7 {
-        if f + i >= 7 || r + i >= 7 {
-            break;
+    for dir in BISHOP_DIRS {
+        let mut cur = sq;
+        while let Some(next) = cur.step(dir) {
+            if next.step(dir).is_some() {
+                mask |= next.to_bitboard();
+            }
+            cur = next;
         }
-        mask |= 1u64 << ((r + i) * 8 + (f + i));
     }
-    // South - East
-    for i in 1..7 {
-        if i >= r || f + i >= 7 {
-            break;
-        }
-        mask |= 1u64 << ((r - i) * 8 + (f + i));
-    }
-    // South - West
-    for i in 1..7 {
-        if i >= r || i >= f {
-            break;
-        }
-        mask |= 1u64 << ((r - i) * 8 + (f - i));
-    }
-    // North - West
-    for i in 1..7 {
-        if r + i >= 7 || i >= f {
-            break;
-        }
-        mask |= 1u64 << ((r + i) * 8 + (f - i));
-    }
-
     mask
 }
 
-fn bishop_attacks_slow(sq: Square, occupency: BitBoard) -> BitBoard {
-    let f = sq.file() as usize;
-    let r = sq.rank() as usize;
+fn bishop_attacks_slow(sq: Square, occupancy: BitBoard) -> BitBoard {
     let mut attacks = 0u64;
-
-    // North - East
-    for i in 1..8 {
-        if f + i >= 8 || r + i >= 8 {
-            break;
-        }
-        attacks |= 1u64 << ((r + i) * 8 + (f + i));
-        if occupency & (1u64 << ((r + i) * 8 + (f + i))) != 0 {
-            break;
+    for dir in BISHOP_DIRS {
+        let mut cur = sq;
+        while let Some(next) = cur.step(dir) {
+            let bit = next.to_bitboard();
+            attacks |= bit;
+            if occupancy & bit != 0 { break; }
+            cur = next;
         }
     }
-    // South - East
-    for i in 1..8 {
-        if i > r || f + i >= 8 {
-            break;
-        }
-        attacks |= 1u64 << ((r - i) * 8 + (f + i));
-        if occupency & (1u64 << ((r - i) * 8 + (f + i))) != 0 {
-            break;
-        }
-    }
-    // South - West
-    for i in 1..8 {
-        if i > r || i > f {
-            break;
-        }
-        attacks |= 1u64 << ((r - i) * 8 + (f - i));
-        if occupency & (1u64 << ((r - i) * 8 + (f - i))) != 0 {
-            break;
-        }
-    }
-    // North - West
-    for i in 1..8 {
-        if r + i >= 8 || i > f {
-            break;
-        }
-        attacks |= 1u64 << ((r + i) * 8 + (f - i));
-        if occupency & (1u64 << ((r + i) * 8 + (f - i))) != 0 {
-            break;
-        }
-    }
-
     attacks
 }
 
