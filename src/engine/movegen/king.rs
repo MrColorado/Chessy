@@ -17,6 +17,20 @@ pub(super) fn gen_king_moves(board: &Board, movelist: &mut Movelist) {
     castle_moves(board, enemy_attacks, movelist); 
 }
 
+pub(super) fn gen_king_legal_moves(board: &Board, danger: BitBoard, in_check: bool, movelist: &mut Movelist) {
+    let color = board.get_current_player_color();
+    let king = board.get_bitboard_for_piece(Piece::King, color);
+    let own = board.get_occupied_squares_for_color(color);
+    for pos in extract_pieces_from_bitboard(king) {
+        let targets = king_targets(pos.to_bitboard()) & !danger & !own;
+        add_quiet_moves(pos, targets, Piece::King, board, movelist);
+        add_capture_moves(pos, targets, Piece::King, board, movelist);
+    }
+    if !in_check {
+        castle_moves(board, danger, movelist);
+    }
+}
+
 pub(super) fn gen_king_attacks(board: &Board, color: Color) -> BitBoard {
     let king = board.get_bitboard_for_piece(Piece::King, color);
     let mut attacks = 0u64;

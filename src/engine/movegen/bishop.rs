@@ -14,14 +14,15 @@ pub(super) fn get_bishop_table() -> &'static MagicTable {
     TABLE.get_or_init(|| MagicTable::new(bishop_blocker_mask, bishop_attacks_slow))
 }
 
-pub(super) fn gen_bishop_moves(board: &Board, movelist: &mut Movelist) {
+pub(super) fn gen_bishop_moves(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
     let table = get_bishop_table();
     let color = board.get_current_player_color();
     let bishops = board.get_bitboard_for_piece(Piece::Bishop, color);
     let occupancy = board.get_occupied_squares();
 
     for sq in extract_pieces_from_bitboard(bishops) {
-        let targets = table.attacks(sq, occupancy);
+        let effective = check_mask & pin_mask[sq.to_index()];
+        let targets = table.attacks(sq, occupancy) & effective;
         add_quiet_moves(sq, targets, Piece::Bishop, board, movelist);
         add_capture_moves(sq, targets, Piece::Bishop, board, movelist);
     }
@@ -85,7 +86,7 @@ mod tests {
     fn moves_for(fen: &str) -> Movelist {
         let board = Board::from_fen(fen).expect("valid FEN");
         let mut list = Movelist::new();
-        gen_bishop_moves(&board, &mut list);
+        gen_bishop_moves(&board, u64::MAX, &[u64::MAX; 64], &mut list);
         list
     }
 

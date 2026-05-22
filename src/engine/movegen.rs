@@ -1,4 +1,3 @@
-use crate::engine::board;
 use crate::engine::board::BitBoard;
 use crate::engine::board::Board;
 use crate::engine::mv::{Move, Movelist};
@@ -15,11 +14,13 @@ mod queen;
 mod rook;
 
 use bishop::{bishop_attack_from, gen_bishop_attacks, gen_bishop_moves};
-use king::{gen_king_attacks, gen_king_moves};
+use king::{gen_king_attacks, gen_king_legal_moves, gen_king_moves};
 use knight::{gen_knight_attacks, gen_knight_moves, knights_attack_from};
 use pawn::{gen_pawn_attacks, gen_pawn_moves, pawn_attack_from};
 use queen::{gen_queen_attacks, gen_queen_moves};
 use rook::{gen_rook_attacks, gen_rook_moves, rook_attack_from};
+
+const NO_PINS: [u64; 64] = [u64::MAX; 64];
 
 const RANK_8: BitBoard = 0xFF00000000000000;
 const RANK_7: BitBoard = 0x00FF000000000000;
@@ -112,16 +113,46 @@ pub fn gen_attacks_for_color(board: &Board, color: Color) -> BitBoard {
 
 pub fn gen_moves(board: &Board) -> Movelist {
     let mut movelist = Movelist::new();
-    gen_pawn_moves(board, &mut movelist);
-    gen_knight_moves(board, &mut movelist);
+    gen_pawn_moves(board, u64::MAX, &NO_PINS, &mut movelist);
+    gen_knight_moves(board, u64::MAX, &NO_PINS, &mut movelist);
     gen_king_moves(board, &mut movelist);
-    gen_rook_moves(board, &mut movelist);
-    gen_bishop_moves(board, &mut movelist);
-    gen_queen_moves(board, &mut movelist);
+    gen_rook_moves(board, u64::MAX, &NO_PINS, &mut movelist);
+    gen_bishop_moves(board, u64::MAX, &NO_PINS, &mut movelist);
+    gen_queen_moves(board, u64::MAX, &NO_PINS, &mut movelist);
     movelist
 }
 
-pub fn compute_danger_squares(board: &Board, color: Color) -> BitBoard {
+pub fn gen_legal_moves(board: &Board) -> Movelist {
+    let mut movelist = Movelist::new();
+
+    let color = board.get_current_player_color();
+    let danger = compute_danger_squares(board, color);
+    let checkers = compute_checker(board, color);
+    let nb_checkers = checkers.count_ones();
+
+    gen_king_legal_moves(board, danger, nb_checkers > 0, &mut movelist);
+
+    if nb_checkers == 2 {
+        return movelist;
+    }
+
+    let (_, pin_mask) = compute_pinned(board, color);
+    let check_mask = if nb_checkers == 1 {
+        compute_check_mask(board, color, checkers)
+    } else {
+        u64::MAX
+    };
+
+    gen_pawn_moves(board, check_mask, &pin_mask, &mut movelist);
+    gen_knight_moves(board, check_mask, &pin_mask, &mut movelist);
+    gen_bishop_moves(board, check_mask, &pin_mask, &mut movelist);
+    gen_rook_moves(board, check_mask, &pin_mask, &mut movelist);
+    gen_queen_moves(board, check_mask, &pin_mask, &mut movelist);
+
+    movelist
+}
+
+fn compute_danger_squares(board: &Board, color: Color) -> BitBoard {
     let occ_no_king =
         board.get_occupied_squares() & !board.get_bitboard_for_piece(Piece::King, color);
     let attacker_color = color.flip();
@@ -135,7 +166,7 @@ pub fn compute_danger_squares(board: &Board, color: Color) -> BitBoard {
     dangers
 }
 
-pub fn compute_checker(board: &Board, color: Color) -> BitBoard {
+fn compute_checker(board: &Board, color: Color) -> BitBoard {
     let opponent_color = color.flip();
     let occupancy = board.get_occupied_squares();
     let king_bb = board.get_king_square(color);
@@ -155,7 +186,32 @@ pub fn compute_checker(board: &Board, color: Color) -> BitBoard {
     checkers
 }
 
-pub fn compute_pinned(board: &Board, color: Color) -> (u64, [u64; 64]) {
+fn compute_check_mask(board: &Board, color: Color, checkers: BitBoard) -> BitBoard {
+    let king_sq = board.get_king_square(color);
+    let occ = board.get_occupied_squares();
+    let mut mask = 0u64;
+    for checker_sq in extract_pieces_from_bitboard(checkers) {
+        mask |= checker_sq.to_bitboard();
+        if let Some((piece, _)) = board.get_piece_at(checker_sq) {
+            match piece {
+                Piece::Rook => {
+                    mask |= rook_attack_from(king_sq, occ) & rook_attack_from(checker_sq, occ);
+                }
+                Piece::Bishop => {
+                    mask |= bishop_attack_from(king_sq, occ) & bishop_attack_from(checker_sq, occ);
+                }
+                Piece::Queen => {
+                    mask |= (rook_attack_from(king_sq, occ) & rook_attack_from(checker_sq, occ))
+                        | (bishop_attack_from(king_sq, occ) & bishop_attack_from(checker_sq, occ));
+                }
+                _ => {}
+            }
+        }
+    }
+    mask
+}
+
+fn compute_pinned(board: &Board, color: Color) -> (u64, [u64; 64]) {
     let mut pin_mask = [u64::MAX; 64];
     let mut pinned = 0u64;
     let enemie_color = color.flip();
@@ -432,7 +488,7 @@ mod pinned_tests {
         let (mask, _) = compute_pinned_for_direction(
             ray,
             occ,
-            occ,  // both are attackers
+            occ,                      // both are attackers
             Square::E7.to_bitboard(), // ally is only e7 (behind attacker e4)
             Direction::N,
         );
@@ -512,9 +568,18 @@ mod pinned_tests {
         // Note: e8 is excluded from RAYS, so attacker must be on e7
         let (pinned_bb, pin_mask) = pinned("8/4r3/8/4P3/8/8/8/4K3 w - - 0 1", Color::White);
         assert_ne!(pinned_bb & Square::E5.to_bitboard(), 0);
-        assert_ne!(pin_mask[Square::E5.to_index()] & Square::E7.to_bitboard(), 0); // can capture
-        assert_ne!(pin_mask[Square::E5.to_index()] & Square::E6.to_bitboard(), 0); // intermediate square
-        assert_eq!(pin_mask[Square::E5.to_index()] & Square::D5.to_bitboard(), 0); // off-ray
+        assert_ne!(
+            pin_mask[Square::E5.to_index()] & Square::E7.to_bitboard(),
+            0
+        ); // can capture
+        assert_ne!(
+            pin_mask[Square::E5.to_index()] & Square::E6.to_bitboard(),
+            0
+        ); // intermediate square
+        assert_eq!(
+            pin_mask[Square::E5.to_index()] & Square::D5.to_bitboard(),
+            0
+        ); // off-ray
     }
 
     #[test]
@@ -522,8 +587,14 @@ mod pinned_tests {
         // King e1, white pawn d2, black bishop c3
         let (pinned_bb, pin_mask) = pinned("8/8/8/8/8/2b5/3P4/4K3 w - - 0 1", Color::White);
         assert_ne!(pinned_bb & Square::D2.to_bitboard(), 0);
-        assert_ne!(pin_mask[Square::D2.to_index()] & Square::C3.to_bitboard(), 0); // can capture
-        assert_eq!(pin_mask[Square::D2.to_index()] & Square::E3.to_bitboard(), 0); // off-ray
+        assert_ne!(
+            pin_mask[Square::D2.to_index()] & Square::C3.to_bitboard(),
+            0
+        ); // can capture
+        assert_eq!(
+            pin_mask[Square::D2.to_index()] & Square::E3.to_bitboard(),
+            0
+        ); // off-ray
     }
 
     #[test]
@@ -532,8 +603,14 @@ mod pinned_tests {
         let (pinned_bb, pin_mask) = pinned("8/4r3/8/8/8/2b5/3PP3/4K3 w - - 0 1", Color::White);
         assert_ne!(pinned_bb & Square::D2.to_bitboard(), 0);
         assert_ne!(pinned_bb & Square::E2.to_bitboard(), 0);
-        assert_ne!(pin_mask[Square::D2.to_index()] & Square::C3.to_bitboard(), 0);
-        assert_ne!(pin_mask[Square::E2.to_index()] & Square::E7.to_bitboard(), 0);
+        assert_ne!(
+            pin_mask[Square::D2.to_index()] & Square::C3.to_bitboard(),
+            0
+        );
+        assert_ne!(
+            pin_mask[Square::E2.to_index()] & Square::E7.to_bitboard(),
+            0
+        );
     }
 
     #[test]
@@ -542,5 +619,280 @@ mod pinned_tests {
         let (pinned_bb, _) = pinned("8/4r3/8/4P3/4P3/8/8/4K3 w - - 0 1", Color::White);
         assert_eq!(pinned_bb & Square::E4.to_bitboard(), 0);
         assert_eq!(pinned_bb & Square::E5.to_bitboard(), 0);
+    }
+}
+
+#[cfg(test)]
+mod check_mask_tests {
+    use super::*;
+
+    fn mask_for(fen: &str) -> BitBoard {
+        let board = Board::from_fen(fen).expect("valid FEN");
+        let color = board.get_current_player_color();
+        let checkers = compute_checker(&board, color);
+        compute_check_mask(&board, color, checkers)
+    }
+
+    #[test]
+    fn knight_check_only_checker_square() {
+        // Knight d3 checks king e1 — leaper, no interposition possible
+        let mask = mask_for("8/8/8/8/8/3n4/8/4K3 w - - 0 1");
+        assert_ne!(
+            mask & Square::D3.to_bitboard(),
+            0,
+            "checker square must be in mask"
+        );
+        assert_eq!(
+            mask & Square::E2.to_bitboard(),
+            0,
+            "no interposition squares"
+        );
+        assert_eq!(
+            mask & Square::D2.to_bitboard(),
+            0,
+            "no interposition squares"
+        );
+    }
+
+    #[test]
+    fn pawn_check_only_checker_square() {
+        // Black pawn d2 checks white king e1 — no interposition possible
+        let mask = mask_for("8/8/8/8/8/8/3p4/4K3 w - - 0 1");
+        assert_ne!(
+            mask & Square::D2.to_bitboard(),
+            0,
+            "checker square must be in mask"
+        );
+        assert_eq!(
+            mask & Square::E2.to_bitboard(),
+            0,
+            "no interposition squares"
+        );
+    }
+
+    #[test]
+    fn rook_check_includes_blocking_squares() {
+        // Rook e8 checks king e1 — can block on e2-e7 or capture e8
+        let mask = mask_for("4r3/8/8/8/8/8/8/4K3 w - - 0 1");
+        assert_ne!(mask & Square::E8.to_bitboard(), 0, "capture square");
+        assert_ne!(mask & Square::E7.to_bitboard(), 0, "block e7");
+        assert_ne!(mask & Square::E4.to_bitboard(), 0, "block e4");
+        assert_ne!(mask & Square::E2.to_bitboard(), 0, "block e2");
+        assert_eq!(
+            mask & Square::D4.to_bitboard(),
+            0,
+            "off-file square excluded"
+        );
+    }
+
+    #[test]
+    fn bishop_check_includes_blocking_squares() {
+        // Bishop c3 checks king e1 — can block on d2 or capture c3
+        let mask = mask_for("8/8/8/8/8/2b5/8/4K3 w - - 0 1");
+        assert_ne!(mask & Square::C3.to_bitboard(), 0, "capture square");
+        assert_ne!(mask & Square::D2.to_bitboard(), 0, "block d2");
+        assert_eq!(mask & Square::C4.to_bitboard(), 0, "off-diagonal excluded");
+        assert_eq!(mask & Square::E3.to_bitboard(), 0, "off-diagonal excluded");
+    }
+
+    #[test]
+    fn queen_check_on_file_includes_blocking_squares() {
+        // Queen e8 checks king e1 via e-file
+        let mask = mask_for("4q3/8/8/8/8/8/8/4K3 w - - 0 1");
+        assert_ne!(mask & Square::E8.to_bitboard(), 0, "capture square");
+        assert_ne!(mask & Square::E5.to_bitboard(), 0, "block e5");
+        assert_ne!(mask & Square::E2.to_bitboard(), 0, "block e2");
+        assert_eq!(mask & Square::D5.to_bitboard(), 0, "off-file excluded");
+    }
+}
+
+#[cfg(test)]
+mod legal_moves_tests {
+    use super::*;
+    use crate::engine::mv::MoveKind;
+
+    fn legal_moves_for(fen: &str) -> Movelist {
+        let board = Board::from_fen(fen).expect("valid FEN");
+        gen_legal_moves(&board)
+    }
+
+    fn has_move(list: &Movelist, from: Square, to: Square) -> bool {
+        list.as_slice()
+            .iter()
+            .any(|m| m.from() == from && m.to() == to)
+    }
+
+    fn count_from(list: &Movelist, from: Square) -> usize {
+        list.as_slice().iter().filter(|m| m.from() == from).count()
+    }
+
+    // --- Sanity ---
+
+    #[test]
+    fn starting_position_20_moves() {
+        assert_eq!(gen_legal_moves(&Board::new()).len(), 20);
+    }
+
+    #[test]
+    fn checkmate_no_moves() {
+        // Black king a8, white queen a7 (protected by king a6) — checkmate
+        assert_eq!(legal_moves_for("k7/Q7/K7/8/8/8/8/8 b - - 0 1").len(), 0);
+    }
+
+    #[test]
+    fn stalemate_no_moves() {
+        // Black king a8, white queen b6, white king h1 — stalemate
+        assert_eq!(legal_moves_for("k7/8/1Q6/8/8/8/8/7K b - - 0 1").len(), 0);
+    }
+
+    // --- Pins ---
+
+    #[test]
+    fn horizontal_pin_pawn_cannot_move() {
+        // King h5, white pawn e5, black rook b5 — pawn pinned along rank 5
+        // (a5 is excluded from RAYS as the board-edge square, rook must be on b5)
+        let list = legal_moves_for("8/8/8/1r2P2K/8/8/8/8 w - - 0 1");
+        assert_eq!(
+            count_from(&list, Square::E5),
+            0,
+            "horizontally pinned pawn must not move"
+        );
+    }
+
+    #[test]
+    fn vertical_pin_pawn_can_only_push() {
+        // King e1, white pawn e5, black rook e7 — pawn pinned on e-file
+        // Pawns only capture diagonally so e7 is unreachable; only e6 push is legal
+        let list = legal_moves_for("8/4r3/8/4P3/8/8/8/4K3 w - - 0 1");
+        assert!(
+            has_move(&list, Square::E5, Square::E6),
+            "push along pin ray"
+        );
+        assert!(
+            !has_move(&list, Square::E5, Square::D6),
+            "diagonal capture off pin ray"
+        );
+        assert!(
+            !has_move(&list, Square::E5, Square::F6),
+            "diagonal capture off pin ray"
+        );
+    }
+
+    #[test]
+    fn diagonal_pin_pawn_can_capture_on_pin_ray() {
+        // King e1, white pawn d2, black bishop c3 — pawn pinned on NW diagonal
+        // Pawn can capture c3 (on the pin ray) but cannot push to d3 or d4
+        let list = legal_moves_for("8/8/8/8/8/2b5/3P4/4K3 w - - 0 1");
+        assert!(
+            has_move(&list, Square::D2, Square::C3),
+            "capture on pin ray"
+        );
+        assert!(
+            !has_move(&list, Square::D2, Square::D3),
+            "push blocked off pin ray"
+        );
+        assert!(
+            !has_move(&list, Square::D2, Square::D4),
+            "double push blocked off pin ray"
+        );
+    }
+
+    #[test]
+    fn pinned_knight_cannot_move() {
+        // King e1, white knight e5, black rook e7 — knight pinned on e-file
+        let list = legal_moves_for("8/4r3/8/4N3/8/8/8/4K3 w - - 0 1");
+        assert_eq!(
+            count_from(&list, Square::E5),
+            0,
+            "pinned knight must not move"
+        );
+    }
+
+    // --- Check ---
+
+    #[test]
+    fn single_check_only_king_or_capture() {
+        // Knight d3 checks king e1; no white pieces to capture, only 4 king moves
+        // King can go to d1, d2, e2, f1 but NOT f2 (attacked by knight d3)
+        let list = legal_moves_for("8/8/8/8/8/3n4/8/4K3 w - - 0 1");
+        assert!(has_move(&list, Square::E1, Square::D1));
+        assert!(has_move(&list, Square::E1, Square::D2));
+        assert!(has_move(&list, Square::E1, Square::E2));
+        assert!(has_move(&list, Square::E1, Square::F1));
+        assert!(
+            !has_move(&list, Square::E1, Square::F2),
+            "f2 attacked by knight"
+        );
+        assert_eq!(list.len(), 4);
+    }
+
+    #[test]
+    fn single_check_piece_can_block() {
+        // Rook e8 checks king e1; white rook c2 can only interpose on e2 (rank move)
+        // King escapes to d1, d2, f1, f2 → total 5 moves
+        let list = legal_moves_for("4r3/8/8/8/8/8/2R5/4K3 w - - 0 1");
+        assert!(
+            has_move(&list, Square::C2, Square::E2),
+            "rook interposes on e2"
+        );
+        assert_eq!(list.len(), 5);
+    }
+
+    #[test]
+    fn double_check_only_king_can_move() {
+        // Knight f3 + rook h1 double-check king e1; white bishop d2 cannot move despite being able to block one check
+        let list = legal_moves_for("8/8/8/8/8/5n2/3B4/4K2r w - - 0 1");
+        assert_eq!(
+            count_from(&list, Square::D2),
+            0,
+            "bishop frozen in double check"
+        );
+        assert_eq!(list.len(), 2, "only two king escapes");
+        assert!(has_move(&list, Square::E1, Square::E2));
+        assert!(has_move(&list, Square::E1, Square::F2));
+    }
+
+    // --- Castling ---
+
+    #[test]
+    fn no_castling_when_in_check() {
+        // King e1 checked by rook e8, kingside castling rights present
+        let list = legal_moves_for("4r3/8/8/8/8/8/8/4K2R w K - 0 1");
+        assert!(
+            !list
+                .as_slice()
+                .iter()
+                .any(|m| m.kind() == MoveKind::KingsideCastle),
+            "cannot castle while in check"
+        );
+    }
+
+    // --- En passant ---
+
+    #[test]
+    fn en_passant_blocked_by_horizontal_exposure() {
+        // White: king a5, pawn b5. Black: pawn c5 (ep c6), rook h5.
+        // After b5xc6 ep, both b5 and c5 leave rank 5 — king a5 exposed to rook h5.
+        let list = legal_moves_for("8/8/8/KPp4r/8/8/8/8 w - c6 0 1");
+        assert!(
+            !list
+                .as_slice()
+                .iter()
+                .any(|m| m.from() == Square::B5 && m.to() == Square::C6),
+            "ep must be rejected due to horizontal king exposure"
+        );
+    }
+
+    #[test]
+    fn en_passant_allowed_when_king_off_rank() {
+        // White: king a8, pawn c5. Black: pawn d5 (ep d6), rook h5.
+        // King not on rank 5 → no horizontal exposure → ep is legal.
+        let list = legal_moves_for("K7/8/8/2Pp3r/8/8/8/8 w - d6 0 1");
+        assert!(
+            list.as_slice()
+                .iter()
+                .any(|m| m.from() == Square::C5 && m.to() == Square::D6),
+            "ep must be allowed when king is not on the same rank"
+        );
     }
 }

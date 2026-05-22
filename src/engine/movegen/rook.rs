@@ -13,14 +13,15 @@ pub(super) fn get_rook_table() -> &'static MagicTable {
     TABLE.get_or_init(|| MagicTable::new(rook_blocker_mask, rook_attacks_slow))
 }
 
-pub(super) fn gen_rook_moves(board: &Board, movelist: &mut Movelist) {
+pub(super) fn gen_rook_moves(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
     let table = get_rook_table();
     let color = board.get_current_player_color();
     let rooks = board.get_bitboard_for_piece(Piece::Rook, color);
     let occupancy = board.get_occupied_squares();
 
     for sq in extract_pieces_from_bitboard(rooks) {
-        let targets = table.attacks(sq, occupancy);
+        let effective = check_mask & pin_mask[sq.to_index()];
+        let targets = table.attacks(sq, occupancy) & effective;
         add_quiet_moves(sq, targets, Piece::Rook, board, movelist);
         add_capture_moves(sq, targets, Piece::Rook, board, movelist);
     }
@@ -38,7 +39,7 @@ pub(super) fn gen_rook_attacks(board: &Board, color: Color, occupancy: BitBoard)
     attacks
 }
 
-pub(super) fn rook_attack_from(sq: Square, occupancy: BitBoard) -> BitBoard {
+pub(crate) fn rook_attack_from(sq: Square, occupancy: BitBoard) -> BitBoard {
   let table = get_rook_table();
   table.attacks(sq, occupancy)
 }
@@ -83,7 +84,7 @@ mod tests {
     fn moves_for(fen: &str) -> Movelist {
         let board = Board::from_fen(fen).expect("valid FEN");
         let mut list = Movelist::new();
-        gen_rook_moves(&board, &mut list);
+        gen_rook_moves(&board, u64::MAX, &[u64::MAX; 64], &mut list);
         list
     }
 
