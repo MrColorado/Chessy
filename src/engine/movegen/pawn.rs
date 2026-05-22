@@ -61,22 +61,26 @@ fn pawn_moves(pos: Square, effective: BitBoard, board: &Board, movelist: &mut Mo
     let occupied = board.get_occupied_squares();
 
     if board.get_white_to_move() {
-        let dest = pos_bb << 8;
-        if dest & occupied == 0 && dest & effective != 0 {
-            add_pawn_targets(pos, dest, RANK_8, false, movelist);
+        let step = pos_bb << 8;
+        if step & occupied == 0 {
+            if step & effective != 0 {
+                add_pawn_targets(pos, step, RANK_8, false, movelist);
+            }
             if pos_bb & RANK_2 != 0 {
-                let double_dest = dest << 8;
+                let double_dest = step << 8;
                 if double_dest & occupied == 0 && double_dest & effective != 0 {
                     movelist.add_move(Move::double_pawn_push(pos, Square(double_dest.trailing_zeros() as u8)));
                 }
             }
         }
     } else {
-        let dest = pos_bb >> 8;
-        if dest & occupied == 0 && dest & effective != 0 {
-            add_pawn_targets(pos, dest, RANK_1, false, movelist);
+        let step = pos_bb >> 8;
+        if step & occupied == 0 {
+            if step & effective != 0 {
+                add_pawn_targets(pos, step, RANK_1, false, movelist);
+            }
             if pos_bb & RANK_7 != 0 {
-                let double_dest = dest >> 8;
+                let double_dest = step >> 8;
                 if double_dest & occupied == 0 && double_dest & effective != 0 {
                     movelist.add_move(Move::double_pawn_push(pos, Square(double_dest.trailing_zeros() as u8)));
                 }

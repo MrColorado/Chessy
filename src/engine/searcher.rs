@@ -5,10 +5,9 @@ use std::sync::{
 };
 
 use super::board::Board;
-use super::movegen::gen_moves;
+use super::movegen::gen_legal_moves;
 use super::mv::Move;
 use super::rule;
-
 
 pub fn search(mut board: Board, stop_flag: Arc<AtomicBool>, tx: Sender<Option<Move>>) {
     let searcher = Searcher::new(stop_flag.clone());
@@ -21,14 +20,8 @@ pub fn search(mut board: Board, stop_flag: Arc<AtomicBool>, tx: Sender<Option<Mo
         let mut alpha = i32::MIN + 1;
         let beta = i32::MAX;
 
-        for mv in gen_moves(&board) {
-            let moving_color = board.get_current_player_color();
+        for mv in gen_legal_moves(&board) {
             let state = board.make_move(mv);
-            if rule::is_in_check(&board, moving_color) {
-                board.unmake_move(mv, state);
-                continue;
-            }
-
             let score = -searcher.negamax(&mut board, depth - 1, -beta, -alpha);
             board.unmake_move(mv, state);
 
@@ -78,20 +71,23 @@ impl Searcher {
         }
 
         if depth == 0 {
-            return  board.get_board_evaluation();
+            return board.get_board_evaluation();
         }
 
         let color = board.get_current_player_color();
+        let legal_moves = gen_legal_moves(&board);
+        if legal_moves.len() == 0 {
+            return if rule::is_in_check(&board, color) {
+                i32::MIN + 1
+            } else {
+                0
+            };
+        }
+
         let mut best_score = i32::MIN + 1;
-        let mut has_legal_move = false;
-        for mv in gen_moves(&board) {
+        for mv in legal_moves {
             let state = board.make_move(mv);
-            if rule::is_in_check(&board, color) {
-                board.unmake_move(mv, state);
-                continue;
-            }
-            has_legal_move = true;
-            let score  = -self.negamax(board,    depth - 1, -beta, -alpha);
+            let score = -self.negamax(board, depth - 1, -beta, -alpha);
             board.unmake_move(mv, state);
 
             if score > best_score {
@@ -105,20 +101,15 @@ impl Searcher {
             }
         }
 
-        if !has_legal_move {
-            return if rule::is_in_check(&board, color) { i32::MIN + 1 } else { 0 };
-        }
-
         best_score
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
     use crate::engine::board::Board;
+    use std::sync::atomic::AtomicBool;
 
     fn eval(fen: &str, depth: i32) -> i32 {
         let searcher = Searcher::new(Arc::new(AtomicBool::new(false)));
@@ -154,7 +145,60 @@ mod tests {
 
     #[test]
     fn fifty_move_rule_scores_zero() {
-        // Horloge à 100 demi-coups → nulle immédiate quelle que soit la position
         assert_eq!(eval("k7/P7/KR6/8/8/8/8/8 w - - 100 1", 2), 0);
+    }
+
+    // --- Tactiques ---
+
+    #[test]
+    fn mate_in_two() {
+        // Blanc joue Rb8+ Ka7, puis Rb7# — mat en 2 coups
+        // Roi noir a8, tour b1, roi blanc c6
+        let score = eval("k7/8/2K5/8/8/8/8/1R6 w - - 0 1", 4);
+        assert_eq!(score, i32::MAX);
+    }
+
+    #[test]
+    fn avoids_losing_piece() {
+        // Tour blanche en h1 attaquée par la tour noire en h8, roi blanc loin
+        // À depth 2 le searcher doit voir la perte et trouver une réponse qui ne perd pas la tour
+        let score = eval("7r/8/8/8/8/8/8/k5RK w - - 0 1", 2);
+        assert!(
+            score > -500,
+            "le searcher accepte de perdre la tour sans raison"
+        );
+    }
+
+    #[test]
+    fn winning_promotion_preferred() {
+        // Pion blanc en a7, roi noir loin — promotion en dame est gagnante
+        let score = eval("6k1/P7/8/8/8/8/8/6K1 w - - 0 1", 2);
+        assert!(score > 0, "la promotion gagnante n'est pas choisie");
+    }
+
+    // --- Régression de score ---
+
+    #[test]
+    fn starting_position_is_symmetric() {
+        // Position de départ : matériel et structure symétriques → score nul
+        let score = eval(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            0,
+        );
+        assert_eq!(score, 0);
+    }
+
+    #[test]
+    fn rook_up_is_positive() {
+        // Blanc a une tour de plus → score positif à depth 0
+        let score = eval("k7/8/8/8/8/8/8/KR6 w - - 0 1", 0);
+        assert!(score > 0, "une tour d'avantage doit scorer positivement");
+    }
+
+    #[test]
+    fn rook_down_is_negative() {
+        // Noir a une tour de plus → score négatif pour blanc à depth 0
+        let score = eval("kr6/8/8/8/8/8/8/K7 w - - 0 1", 0);
+        assert!(score < 0, "une tour de moins doit scorer négativement");
     }
 }

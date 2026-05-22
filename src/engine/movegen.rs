@@ -14,13 +14,11 @@ mod queen;
 mod rook;
 
 use bishop::{bishop_attack_from, gen_bishop_attacks, gen_bishop_moves};
-use king::{gen_king_attacks, gen_king_legal_moves, gen_king_moves};
+use king::{gen_king_attacks, gen_king_legal_moves};
 use knight::{gen_knight_attacks, gen_knight_moves, knights_attack_from};
 use pawn::{gen_pawn_attacks, gen_pawn_moves, pawn_attack_from};
 use queen::{gen_queen_attacks, gen_queen_moves};
 use rook::{gen_rook_attacks, gen_rook_moves, rook_attack_from};
-
-const NO_PINS: [u64; 64] = [u64::MAX; 64];
 
 const RANK_8: BitBoard = 0xFF00000000000000;
 const RANK_7: BitBoard = 0x00FF000000000000;
@@ -42,9 +40,6 @@ const fn compute_rays() -> [[u64; 8]; 64] {
         while dir < 8 {
             let mut cur = ALL_SQUARES[sq];
             while let Some(next) = cur.step(ALL_DIRS[dir]) {
-                if next.step(ALL_DIRS[dir]).is_none() {
-                    break;
-                }
                 table[sq][dir] |= next.to_bitboard();
                 cur = next;
             }
@@ -93,7 +88,9 @@ pub(super) fn add_capture_moves(
     board: &Board,
     movelist: &mut Movelist,
 ) {
-    let captures = targets & board.get_occupied_squares_for_color(board.get_opponent_color());
+    let opponent = board.get_opponent_color();
+    let enemy_king = board.get_bitboard_for_piece(Piece::King, opponent);
+    let captures = targets & board.get_occupied_squares_for_color(opponent) & !enemy_king;
     for dest in extract_pieces_from_bitboard(captures) {
         movelist.add_move(Move::capture(from, dest, piece));
     }
@@ -109,17 +106,6 @@ pub fn gen_attacks_for_color(board: &Board, color: Color) -> BitBoard {
     attacks |= gen_bishop_attacks(board, color, occupancy);
     attacks |= gen_queen_attacks(board, color, occupancy);
     attacks
-}
-
-pub fn gen_moves(board: &Board) -> Movelist {
-    let mut movelist = Movelist::new();
-    gen_pawn_moves(board, u64::MAX, &NO_PINS, &mut movelist);
-    gen_knight_moves(board, u64::MAX, &NO_PINS, &mut movelist);
-    gen_king_moves(board, &mut movelist);
-    gen_rook_moves(board, u64::MAX, &NO_PINS, &mut movelist);
-    gen_bishop_moves(board, u64::MAX, &NO_PINS, &mut movelist);
-    gen_queen_moves(board, u64::MAX, &NO_PINS, &mut movelist);
-    movelist
 }
 
 pub fn gen_legal_moves(board: &Board) -> Movelist {
@@ -152,7 +138,7 @@ pub fn gen_legal_moves(board: &Board) -> Movelist {
     movelist
 }
 
-fn compute_danger_squares(board: &Board, color: Color) -> BitBoard {
+pub(super) fn compute_danger_squares(board: &Board, color: Color) -> BitBoard {
     let occ_no_king =
         board.get_occupied_squares() & !board.get_bitboard_for_piece(Piece::King, color);
     let attacker_color = color.flip();
@@ -201,8 +187,11 @@ fn compute_check_mask(board: &Board, color: Color, checkers: BitBoard) -> BitBoa
                     mask |= bishop_attack_from(king_sq, occ) & bishop_attack_from(checker_sq, occ);
                 }
                 Piece::Queen => {
-                    mask |= (rook_attack_from(king_sq, occ) & rook_attack_from(checker_sq, occ))
-                        | (bishop_attack_from(king_sq, occ) & bishop_attack_from(checker_sq, occ));
+                    if rook_attack_from(king_sq, occ) & checker_sq.to_bitboard() != 0 {
+                        mask |= rook_attack_from(king_sq, occ) & rook_attack_from(checker_sq, occ);
+                    } else {
+                        mask |= bishop_attack_from(king_sq, occ) & bishop_attack_from(checker_sq, occ);
+                    }
                 }
                 _ => {}
             }
@@ -526,7 +515,7 @@ mod pinned_tests {
         assert_ne!(mask & Square::E4.to_bitboard(), 0); // pinned piece can retreat toward king
         assert_ne!(mask & Square::E6.to_bitboard(), 0); // square between ally and attacker
         assert_ne!(mask & Square::E7.to_bitboard(), 0); // can capture attacker
-        assert_eq!(mask & Square::E8.to_bitboard(), 0); // beyond attacker (edge, excluded from ray)
+        assert_eq!(mask & Square::E8.to_bitboard(), 0); // beyond attacker, not in pin mask
         assert_eq!(mask & Square::D5.to_bitboard(), 0); // off the N ray
     }
 
@@ -565,7 +554,7 @@ mod pinned_tests {
     #[test]
     fn rook_pin_north() {
         // King e1, white pawn e5, black rook e7 — pawn pinned on N ray
-        // Note: e8 is excluded from RAYS, so attacker must be on e7
+        // Rook on e7, pawn on e5: pawn is pinned on e-file
         let (pinned_bb, pin_mask) = pinned("8/4r3/8/4P3/8/8/8/4K3 w - - 0 1", Color::White);
         assert_ne!(pinned_bb & Square::E5.to_bitboard(), 0);
         assert_ne!(
@@ -750,7 +739,7 @@ mod legal_moves_tests {
     #[test]
     fn horizontal_pin_pawn_cannot_move() {
         // King h5, white pawn e5, black rook b5 — pawn pinned along rank 5
-        // (a5 is excluded from RAYS as the board-edge square, rook must be on b5)
+        // (pin along rank 5: king h5, pawn e5, rook b5 — rook pinning pawn against king)
         let list = legal_moves_for("8/8/8/1r2P2K/8/8/8/8 w - - 0 1");
         assert_eq!(
             count_from(&list, Square::E5),
