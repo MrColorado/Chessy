@@ -5,13 +5,15 @@ use crate::engine::square::Square;
 
 use super::extract_pieces_from_bitboard;
 use super::{NOT_A_FILE, NOT_H_FILE, RANK_1, RANK_2, RANK_7, RANK_8};
+use crate::engine::movegen::rook::rook_attack_from;
 
-pub(super) fn gen_pawn_moves(board: &Board, movelist: &mut Movelist) {
+pub(super) fn gen_pawn_moves(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
     let color = board.get_current_player_color();
     let pawns = board.get_bitboard_for_piece(Piece::Pawn, color);
     for pos in extract_pieces_from_bitboard(pawns) {
-        pawn_moves(pos, board, movelist);
-        pawn_attacks(pos, board, movelist);
+        let effective = check_mask & pin_mask[pos.to_index()];
+        pawn_moves(pos, effective, board, movelist);
+        pawn_attacks(pos, effective, check_mask, pin_mask, board, movelist);
     }
 }
 
@@ -20,9 +22,13 @@ pub(super) fn gen_pawn_attacks(board: &Board, color: Color) -> BitBoard {
 
     let mut attacks = 0u64;
     for pos in extract_pieces_from_bitboard(pawns) {
-        attacks |= pawn_sqare_attacks(pos, color);
+        attacks |= pawn_square_attacks(pos, color);
     }
     attacks
+}
+
+pub(super) fn pawn_attack_from(sq: Square, color: Color) -> BitBoard {
+    pawn_square_attacks(sq, color)
 }
 
 fn add_pawn_targets(
@@ -50,28 +56,32 @@ fn add_pawn_targets(
     }
 }
 
-fn pawn_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
+fn pawn_moves(pos: Square, effective: BitBoard, board: &Board, movelist: &mut Movelist) {
     let pos_bb = pos.to_bitboard();
     let occupied = board.get_occupied_squares();
 
     if board.get_white_to_move() {
-        let dest = pos_bb << 8;
-        if dest & occupied == 0 {
-            add_pawn_targets(pos, dest, RANK_8, false, movelist);
+        let step = pos_bb << 8;
+        if step & occupied == 0 {
+            if step & effective != 0 {
+                add_pawn_targets(pos, step, RANK_8, false, movelist);
+            }
             if pos_bb & RANK_2 != 0 {
-                let double_dest = dest << 8;
-                if double_dest & occupied == 0 {
+                let double_dest = step << 8;
+                if double_dest & occupied == 0 && double_dest & effective != 0 {
                     movelist.add_move(Move::double_pawn_push(pos, Square(double_dest.trailing_zeros() as u8)));
                 }
             }
         }
     } else {
-        let dest = pos_bb >> 8;
-        if dest & occupied == 0 {
-            add_pawn_targets(pos, dest, RANK_1, false, movelist);
+        let step = pos_bb >> 8;
+        if step & occupied == 0 {
+            if step & effective != 0 {
+                add_pawn_targets(pos, step, RANK_1, false, movelist);
+            }
             if pos_bb & RANK_7 != 0 {
-                let double_dest = dest >> 8;
-                if double_dest & occupied == 0 {
+                let double_dest = step >> 8;
+                if double_dest & occupied == 0 && double_dest & effective != 0 {
                     movelist.add_move(Move::double_pawn_push(pos, Square(double_dest.trailing_zeros() as u8)));
                 }
             }
@@ -79,17 +89,23 @@ fn pawn_moves(pos: Square, board: &Board, movelist: &mut Movelist) {
     }
 }
 
-fn pawn_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
+fn pawn_attacks(pos: Square, effective: BitBoard, check_mask: BitBoard, pin_mask: &[u64; 64], board: &Board, movelist: &mut Movelist) {
     let pos_bb = pos.to_bitboard();
+    let color = board.get_current_player_color();
 
     if board.get_white_to_move() {
         let left_attack = (pos_bb & NOT_A_FILE) << 7;
         let right_attack = (pos_bb & NOT_H_FILE) << 9;
         let attacks =
-            (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::Black);
+            (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::Black) & effective;
         add_pawn_targets(pos, attacks, RANK_8, true, movelist);
         if let Some(ep_sq) = board.get_en_passant_square() {
-            if (left_attack | right_attack) & ep_sq.to_bitboard() != 0 {
+            let ep_bb = ep_sq.to_bitboard();
+            if (left_attack | right_attack) & ep_bb != 0
+                && pin_mask[pos.to_index()] & ep_bb != 0
+                && check_mask & ep_bb != 0
+                && !ep_exposes_king_horizontally(board, color, pos, ep_sq)
+            {
                 movelist.add_move(Move::en_passant(pos, ep_sq));
             }
         }
@@ -97,17 +113,39 @@ fn pawn_attacks(pos: Square, board: &Board, movelist: &mut Movelist) {
         let left_attack = (pos_bb & NOT_A_FILE) >> 9;
         let right_attack = (pos_bb & NOT_H_FILE) >> 7;
         let attacks =
-            (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::White);
+            (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::White) & effective;
         add_pawn_targets(pos, attacks, RANK_1, true, movelist);
         if let Some(ep_sq) = board.get_en_passant_square() {
-            if (left_attack | right_attack) & ep_sq.to_bitboard() != 0 {
+            let ep_bb = ep_sq.to_bitboard();
+            if (left_attack | right_attack) & ep_bb != 0
+                && pin_mask[pos.to_index()] & ep_bb != 0
+                && check_mask & ep_bb != 0
+                && !ep_exposes_king_horizontally(board, color, pos, ep_sq)
+            {
                 movelist.add_move(Move::en_passant(pos, ep_sq));
             }
         }
     }
 }
 
-fn pawn_sqare_attacks(pos: Square, color: Color) -> BitBoard {
+fn ep_exposes_king_horizontally(board: &Board, color: Color, from: Square, ep_sq: Square) -> bool {
+    let king_sq = board.get_king_square(color);
+    if king_sq.rank() != from.rank() {
+        return false;
+    }
+    let captured_sq = if color == Color::White {
+        Square(ep_sq.0 - 8)
+    } else {
+        Square(ep_sq.0 + 8)
+    };
+    let occ_after = board.get_occupied_squares() & !(from.to_bitboard() | captured_sq.to_bitboard());
+    let enemy = color.flip();
+    let sliders = board.get_bitboard_for_piece(Piece::Rook, enemy)
+        | board.get_bitboard_for_piece(Piece::Queen, enemy);
+    rook_attack_from(king_sq, occ_after) & sliders != 0
+}
+
+fn pawn_square_attacks(pos: Square, color: Color) -> BitBoard {
     let pos_bb = pos.to_bitboard();
     match color {
         Color::White => {
@@ -130,7 +168,7 @@ mod tests {
     fn moves_for(fen: &str) -> Movelist {
         let board = Board::from_fen(fen).expect("valid FEN");
         let mut list = Movelist::new();
-        gen_pawn_moves(&board, &mut list);
+        gen_pawn_moves(&board, u64::MAX, &[u64::MAX; 64], &mut list);
         list
     }
 

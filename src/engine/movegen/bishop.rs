@@ -4,7 +4,7 @@ use crate::engine::board::{BitBoard, Board};
 use crate::engine::movegen::magic::MagicTable;
 use crate::engine::mv::Movelist;
 use crate::engine::piece::{Piece, Color};
-use crate::engine::square::Square;
+use crate::engine::square::{Square, BISHOP_DIRS};
 
 
 use super::{add_capture_moves, add_quiet_moves, extract_pieces_from_bitboard};
@@ -14,23 +14,23 @@ pub(super) fn get_bishop_table() -> &'static MagicTable {
     TABLE.get_or_init(|| MagicTable::new(bishop_blocker_mask, bishop_attacks_slow))
 }
 
-pub(super) fn gen_bishop_moves(board: &Board, movelist: &mut Movelist) {
+pub(super) fn gen_bishop_moves(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
     let table = get_bishop_table();
     let color = board.get_current_player_color();
     let bishops = board.get_bitboard_for_piece(Piece::Bishop, color);
     let occupancy = board.get_occupied_squares();
 
     for sq in extract_pieces_from_bitboard(bishops) {
-        let targets = table.attacks(sq, occupancy);
+        let effective = check_mask & pin_mask[sq.to_index()];
+        let targets = table.attacks(sq, occupancy) & effective;
         add_quiet_moves(sq, targets, Piece::Bishop, board, movelist);
         add_capture_moves(sq, targets, Piece::Bishop, board, movelist);
     }
 }
 
-pub(super) fn gen_bishop_attacks(board: &Board, color: Color) -> BitBoard {
+pub(super) fn gen_bishop_attacks(board: &Board, color: Color, occupancy: BitBoard) -> BitBoard {
     let table = get_bishop_table();
     let bishops = board.get_bitboard_for_piece(Piece::Bishop, color);
-    let occupancy = board.get_occupied_squares();
     let mut attacks = 0u64;
 
     for sq in extract_pieces_from_bitboard(bishops) {
@@ -40,92 +40,41 @@ pub(super) fn gen_bishop_attacks(board: &Board, color: Color) -> BitBoard {
     attacks
 }
 
+
+pub(super) fn bishop_attack_from(sq: Square, occupancy: BitBoard) -> BitBoard {
+  let table = get_bishop_table();
+  table.attacks(sq, occupancy)
+}
+
+
 // Compute the blocker mask for a bishop on `sq`.
 // Includes all squares on the same diagonal where a blocker could matter,
 // excluding the board edges (a piece on the edge can't block further).
 fn bishop_blocker_mask(sq: Square) -> BitBoard {
-    let f = sq.file() as usize;
-    let r = sq.rank() as usize;
     let mut mask = 0u64;
-
-    // North - East
-    for i in 1..7 {
-        if f + i >= 7 || r + i >= 7 {
-            break;
+    for dir in BISHOP_DIRS {
+        let mut cur = sq;
+        while let Some(next) = cur.step(dir) {
+            if next.step(dir).is_some() {
+                mask |= next.to_bitboard();
+            }
+            cur = next;
         }
-        mask |= 1u64 << ((r + i) * 8 + (f + i));
     }
-    // South - East
-    for i in 1..7 {
-        if i >= r || f + i >= 7 {
-            break;
-        }
-        mask |= 1u64 << ((r - i) * 8 + (f + i));
-    }
-    // South - West
-    for i in 1..7 {
-        if i >= r || i >= f {
-            break;
-        }
-        mask |= 1u64 << ((r - i) * 8 + (f - i));
-    }
-    // North - West
-    for i in 1..7 {
-        if r + i >= 7 || i >= f {
-            break;
-        }
-        mask |= 1u64 << ((r + i) * 8 + (f - i));
-    }
-
     mask
 }
 
-fn bishop_attacks_slow(sq: Square, occupency: BitBoard) -> BitBoard {
-    let f = sq.file() as usize;
-    let r = sq.rank() as usize;
+fn bishop_attacks_slow(sq: Square, occupancy: BitBoard) -> BitBoard {
     let mut attacks = 0u64;
-
-    // North - East
-    for i in 1..8 {
-        if f + i >= 8 || r + i >= 8 {
-            break;
-        }
-        attacks |= 1u64 << ((r + i) * 8 + (f + i));
-        if occupency & (1u64 << ((r + i) * 8 + (f + i))) != 0 {
-            break;
+    for dir in BISHOP_DIRS {
+        let mut cur = sq;
+        while let Some(next) = cur.step(dir) {
+            let bit = next.to_bitboard();
+            attacks |= bit;
+            if occupancy & bit != 0 { break; }
+            cur = next;
         }
     }
-    // South - East
-    for i in 1..8 {
-        if i > r || f + i >= 8 {
-            break;
-        }
-        attacks |= 1u64 << ((r - i) * 8 + (f + i));
-        if occupency & (1u64 << ((r - i) * 8 + (f + i))) != 0 {
-            break;
-        }
-    }
-    // South - West
-    for i in 1..8 {
-        if i > r || i > f {
-            break;
-        }
-        attacks |= 1u64 << ((r - i) * 8 + (f - i));
-        if occupency & (1u64 << ((r - i) * 8 + (f - i))) != 0 {
-            break;
-        }
-    }
-    // North - West
-    for i in 1..8 {
-        if r + i >= 8 || i > f {
-            break;
-        }
-        attacks |= 1u64 << ((r + i) * 8 + (f - i));
-        if occupency & (1u64 << ((r + i) * 8 + (f - i))) != 0 {
-            break;
-        }
-    }
-
     attacks
 }
 
@@ -137,7 +86,7 @@ mod tests {
     fn moves_for(fen: &str) -> Movelist {
         let board = Board::from_fen(fen).expect("valid FEN");
         let mut list = Movelist::new();
-        gen_bishop_moves(&board, &mut list);
+        gen_bishop_moves(&board, u64::MAX, &[u64::MAX; 64], &mut list);
         list
     }
 
@@ -149,7 +98,7 @@ mod tests {
 
     fn attacks_for(fen: &str) -> BitBoard {
         let board = Board::from_fen(fen).expect("valid FEN");
-        gen_bishop_attacks(&board, board.get_current_player_color())
+        gen_bishop_attacks(&board, board.get_current_player_color(), board.get_occupied_squares())
     }
 
     #[test]

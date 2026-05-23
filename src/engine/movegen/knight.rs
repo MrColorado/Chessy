@@ -7,11 +7,12 @@ use crate::engine::square::Square;
 use super::extract_pieces_from_bitboard;
 use super::{add_capture_moves, add_quiet_moves, NOT_A_FILE, NOT_AB_FILE, NOT_GH_FILE, NOT_H_FILE};
 
-pub(super) fn gen_knight_moves(board: &Board, movelist: &mut Movelist) {
+pub(super) fn gen_knight_moves(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
     let color = board.get_current_player_color();
     let knights = board.get_bitboard_for_piece(Piece::Knight, color);
     for pos in extract_pieces_from_bitboard(knights) {
-        let targets = knight_targets(pos.to_bitboard());
+        let effective = check_mask & pin_mask[pos.to_index()];
+        let targets = knight_targets(pos.to_bitboard()) & effective;
         add_quiet_moves(pos, targets, Piece::Knight, board, movelist);
         add_capture_moves(pos, targets, Piece::Knight, board, movelist);
     }
@@ -28,6 +29,10 @@ pub(super) fn gen_knight_attacks(board: &Board, color: Color) -> BitBoard {
     attacks
 }
 
+pub(super) fn knights_attack_from(sq: Square) -> BitBoard {
+    knight_targets(sq.to_bitboard())
+}
+
 fn knight_targets(pos: BitBoard) -> BitBoard {
     let mut target = (pos << 17) & NOT_A_FILE;
     target |= (pos << 15) & NOT_H_FILE;
@@ -42,12 +47,13 @@ fn knight_targets(pos: BitBoard) -> BitBoard {
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::square::Square;
     use super::*;
 
     fn moves_for(fen: &str) -> Movelist {
         let board = Board::from_fen(fen).expect("valid FEN");
         let mut list = Movelist::new();
-        gen_knight_moves(&board, &mut list);
+        gen_knight_moves(&board, u64::MAX, &[u64::MAX; 64], &mut list);
         list
     }
 
@@ -172,6 +178,30 @@ mod tests {
         assert!(attacks & Square::G6.to_bitboard() != 0);
         assert!(attacks & Square::F7.to_bitboard() != 0);
         assert_eq!(attacks.count_ones(), 4);
+    }
+
+    #[test]
+    fn knights_attack_from_center() {
+        let attacks = knights_attack_from(Square::D4);
+        assert_eq!(attacks.count_ones(), 8);
+    }
+
+    #[test]
+    fn knights_attack_from_corner_a1() {
+        let attacks = knights_attack_from(Square::A1);
+        assert_eq!(attacks.count_ones(), 2);
+        assert!(attacks & Square::B3.to_bitboard() != 0);
+        assert!(attacks & Square::C2.to_bitboard() != 0);
+    }
+
+    #[test]
+    fn knights_attack_from_edge_h4() {
+        let attacks = knights_attack_from(Square::H4);
+        assert_eq!(attacks.count_ones(), 4);
+        assert!(attacks & Square::G2.to_bitboard() != 0);
+        assert!(attacks & Square::F3.to_bitboard() != 0);
+        assert!(attacks & Square::F5.to_bitboard() != 0);
+        assert!(attacks & Square::G6.to_bitboard() != 0);
     }
 
     #[test]

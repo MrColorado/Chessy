@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use chess::engine::board::Board;
-use chess::engine::movegen::gen_moves;
-use chess::engine::rule::{gen_legal_moves, perft};
+use chess::engine::movegen::gen_legal_moves;
+use chess::engine::rule::perft;
 use chess::engine::searcher::negamax_bench;
 
 fn startpos() -> Board {
@@ -15,23 +15,6 @@ fn kiwipete() -> Board {
 
 fn pos3() -> Board {
     Board::from_fen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1").unwrap()
-}
-
-// ── génération de coups pseudo-légaux ────────────────────────────────────────
-
-fn bench_gen_moves(c: &mut Criterion) {
-    let positions = [
-        ("startpos", startpos()),
-        ("kiwipete", kiwipete()),
-        ("pos3", pos3()),
-    ];
-    let mut g = c.benchmark_group("gen_moves");
-    for (name, board) in &positions {
-        g.bench_with_input(BenchmarkId::from_parameter(name), board, |b, board| {
-            b.iter(|| gen_moves(black_box(board)))
-        });
-    }
-    g.finish();
 }
 
 // ── génération de coups légaux ───────────────────────────────────────────────
@@ -78,14 +61,14 @@ fn bench_search(c: &mut Criterion) {
     g.sample_size(10);
 
     g.bench_function("startpos/d3", |b| {
-        b.iter(|| negamax_bench(black_box(&mut startpos()), 3, 1))
+        b.iter(|| negamax_bench(black_box(&mut startpos()), 3))
     });
     g.bench_function("kiwipete/d3", |b| {
-        b.iter(|| negamax_bench(black_box(&mut kiwipete()), 3, 1))
+        b.iter(|| negamax_bench(black_box(&mut kiwipete()), 3))
     });
 
     g.finish();
 }
 
-criterion_group!(benches, bench_gen_moves, bench_gen_legal_moves, bench_perft, bench_search);
+criterion_group!(benches, bench_gen_legal_moves, bench_perft, bench_search);
 criterion_main!(benches);

@@ -1,26 +1,11 @@
 use crate::engine::board::Board;
-use crate::engine::mv::Movelist;
 use crate::engine::piece::Color;
-use crate::engine::movegen::{gen_attacks_for_color, gen_moves};
+use crate::engine::movegen::{gen_attacks_for_color, gen_legal_moves};
 
 pub fn is_in_check(board: &Board, color: Color) -> bool {
     let king_square = board.get_king_square(color);
     let opponent_attacks = gen_attacks_for_color(board, color.flip());
     opponent_attacks & king_square.to_bitboard() != 0
-}
-
-pub fn gen_legal_moves(board: &mut Board) -> Movelist {
-    let pseudo_moves = gen_moves(board);
-    let color = board.get_current_player_color();
-    let mut legal = Movelist::new();
-    for &mv in pseudo_moves.as_slice() {
-        let state = board.make_move(mv);
-        if !is_in_check(board, color) {
-            legal.add_move(mv);
-        }
-        board.unmake_move(mv, state);
-    }
-    legal
 }
 
 pub fn perft(board: &mut Board, depth: u32) -> u64 {

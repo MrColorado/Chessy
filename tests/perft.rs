@@ -1,5 +1,5 @@
 use chess::engine::board::Board;
-use chess::engine::rule::gen_legal_moves;
+use chess::engine::movegen::gen_legal_moves;
 
 fn perft(board: &mut Board, depth: u32) -> u64 {
     if depth == 0 {

@@ -28,6 +28,11 @@ jobs:
         run: |
           cp target/release/chess-uci     chess-uci-${{ github.ref_name }}-${{ matrix.suffix }}
           cp target/release/chess-lichess chess-lichess-${{ github.ref_name }}-${{ matrix.suffix }}
+      - name: Sign binaries (macOS ad-hoc)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --sign - chess-uci-${{ github.ref_name }}-${{ matrix.suffix }}
+          codesign --sign - chess-lichess-${{ github.ref_name }}-${{ matrix.suffix }}
       - uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.suffix }}

@@ -4,7 +4,7 @@ use crate::engine::board::{BitBoard, Board};
 use crate::engine::movegen::magic::MagicTable;
 use crate::engine::mv::Movelist;
 use crate::engine::piece::{Piece, Color};
-use crate::engine::square::Square;
+use crate::engine::square::{Square, ROOK_DIRS};
 
 use super::{add_capture_moves, add_quiet_moves, extract_pieces_from_bitboard};
 
@@ -13,23 +13,23 @@ pub(super) fn get_rook_table() -> &'static MagicTable {
     TABLE.get_or_init(|| MagicTable::new(rook_blocker_mask, rook_attacks_slow))
 }
 
-pub(super) fn gen_rook_moves(board: &Board, movelist: &mut Movelist) {
+pub(super) fn gen_rook_moves(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
     let table = get_rook_table();
     let color = board.get_current_player_color();
     let rooks = board.get_bitboard_for_piece(Piece::Rook, color);
     let occupancy = board.get_occupied_squares();
 
     for sq in extract_pieces_from_bitboard(rooks) {
-        let targets = table.attacks(sq, occupancy);
+        let effective = check_mask & pin_mask[sq.to_index()];
+        let targets = table.attacks(sq, occupancy) & effective;
         add_quiet_moves(sq, targets, Piece::Rook, board, movelist);
         add_capture_moves(sq, targets, Piece::Rook, board, movelist);
     }
 }
 
-pub(super) fn gen_rook_attacks(board: &Board, color: Color) -> BitBoard {
+pub(super) fn gen_rook_attacks(board: &Board, color: Color, occupancy: BitBoard) -> BitBoard {
     let table = get_rook_table();
     let rooks = board.get_bitboard_for_piece(Piece::Rook, color);
-    let occupancy = board.get_occupied_squares();
     let mut attacks = 0u64;
 
     for sq in extract_pieces_from_bitboard(rooks) {
@@ -39,82 +39,41 @@ pub(super) fn gen_rook_attacks(board: &Board, color: Color) -> BitBoard {
     attacks
 }
 
+pub(crate) fn rook_attack_from(sq: Square, occupancy: BitBoard) -> BitBoard {
+  let table = get_rook_table();
+  table.attacks(sq, occupancy)
+}
+
 // Compute the blocker mask for a rook on `sq`.
 // Includes all squares on the same rank/file where a blocker could matter,
 // excluding the board edges (a piece on the edge can't block further).
 fn rook_blocker_mask(sq: Square) -> BitBoard {
-    let f = sq.file() as usize;
-    let r = sq.rank() as usize;
     let mut mask = 0u64;
-
-    // North: ranks r+1..6 on same file (exclude rank 7 edge)
-    for rank in (r + 1)..7 {
-        mask |= 1u64 << (rank * 8 + f);
-    }
-    // South: ranks 1..r on same file (exclude rank 0 edge)
-    if r > 0 {
-        for rank in 1..r {
-            mask |= 1u64 << (rank * 8 + f);
+    for dir in ROOK_DIRS {
+        let mut cur = sq;
+        while let Some(next) = cur.step(dir) {
+            if next.step(dir).is_some() {
+                mask |= next.to_bitboard();
+            }
+            cur = next;
         }
     }
-    // East: files f+1..6 on same rank (exclude file 7 edge)
-    for file in (f + 1)..7 {
-        mask |= 1u64 << (r * 8 + file);
-    }
-    // West: files 1..f on same rank (exclude file 0 edge)
-    if f > 0 {
-        for file in 1..f {
-            mask |= 1u64 << (r * 8 + file);
-        }
-    }
-
     mask
 }
 
 // Compute the actual attack bitboard for a rook on `sq` given an occupancy.
 // Traces all 4 rays and stops at the first occupied square (included).
 fn rook_attacks_slow(sq: Square, occupancy: BitBoard) -> BitBoard {
-    let f = sq.file() as usize;
-    let r = sq.rank() as usize;
     let mut attacks = 0u64;
-
-    // North
-    for rank in (r + 1)..8 {
-        let bit = 1u64 << (rank * 8 + f);
-        attacks |= bit;
-        if occupancy & bit != 0 {
-            break;
-        }
-    }
-    // South
-    if r > 0 {
-        for rank in (0..r).rev() {
-            let bit = 1u64 << (rank * 8 + f);
+    for dir in ROOK_DIRS {
+        let mut cur = sq;
+        while let Some(next) = cur.step(dir) {
+            let bit = next.to_bitboard();
             attacks |= bit;
-            if occupancy & bit != 0 {
-                break;
-            }
+            if occupancy & bit != 0 { break; }
+            cur = next;
         }
     }
-    // East
-    for file in (f + 1)..8 {
-        let bit = 1u64 << (r * 8 + file);
-        attacks |= bit;
-        if occupancy & bit != 0 {
-            break;
-        }
-    }
-    // West
-    if f > 0 {
-        for file in (0..f).rev() {
-            let bit = 1u64 << (r * 8 + file);
-            attacks |= bit;
-            if occupancy & bit != 0 {
-                break;
-            }
-        }
-    }
-
     attacks
 }
 
@@ -125,7 +84,7 @@ mod tests {
     fn moves_for(fen: &str) -> Movelist {
         let board = Board::from_fen(fen).expect("valid FEN");
         let mut list = Movelist::new();
-        gen_rook_moves(&board, &mut list);
+        gen_rook_moves(&board, u64::MAX, &[u64::MAX; 64], &mut list);
         list
     }
 
@@ -137,7 +96,7 @@ mod tests {
 
     fn attacks_for(fen: &str) -> BitBoard {
         let board = Board::from_fen(fen).expect("valid FEN");
-        gen_rook_attacks(&board, board.get_current_player_color())
+        gen_rook_attacks(&board, board.get_current_player_color(), board.get_occupied_squares())
     }
 
 

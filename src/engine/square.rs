@@ -20,6 +20,16 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Square(pub u8);
 
+pub const ALL_SQUARES: [Square; 64] = {
+    let mut arr = [Square(0); 64];
+    let mut i = 0u8;
+    while i < 64 {
+        arr[i as usize] = Square(i);
+        i += 1;
+    }
+    arr
+};
+
 impl Square {
     pub const A1: Square = Square(0);
     pub const B1: Square = Square(1);
@@ -123,17 +133,30 @@ impl Square {
     pub fn rank(self) -> u8 {
         self.0 / 8
     }
-
-    // Convert this square to a BitBoard with exactly one bit set.
-    #[inline]
-    pub fn to_bitboard(self) -> u64 {
-        1u64 << self.0
-    }
-
     // The raw index, useful when indexing into arrays.
     #[inline]
     pub fn to_index(self) -> usize {
         self.0 as usize
+    }
+
+    // Convert this square to a BitBoard with exactly one bit set.
+    #[inline]
+    pub const fn to_bitboard(self) -> u64 {
+        1u64 << self.0
+    }
+
+    pub const fn step(self, dir: Direction) -> Option<Square> {
+        let next = self.0 as i8 + dir as i8;
+        if next < 0 || next >= 64 { return None; }
+        // In case we wrap horizontally
+        let file_diff = (next % 8) - (self.0 as i8 % 8);
+        let expected = match dir {
+            Direction::N | Direction::S => 0,
+            Direction::E | Direction::NE | Direction::SE => 1,
+            Direction::W | Direction::NW | Direction::SW => -1,
+        };
+        if file_diff != expected { return None; }
+        Some(Square(next as u8))
     }
 }
 
@@ -144,6 +167,33 @@ impl fmt::Display for Square {
         write!(f, "{}{}", file_char, rank_char)
     }
 }
+
+
+#[repr(i8)]
+#[derive(Clone, Copy, Debug)]
+pub enum Direction {
+    N  =  8,
+    NE =  9,
+    E  =  1,
+    SE = -7,
+    S  = -8,
+    SW = -9,
+    W  = -1,
+    NW =  7,
+}
+
+impl Direction {
+    pub fn is_upward(self) -> bool {
+        self as i8 > 0
+    }
+}
+
+pub const ROOK_DIRS:   [Direction; 4] = [Direction::N, Direction::S, Direction::E, Direction::W];
+pub const BISHOP_DIRS: [Direction; 4] = [Direction::NE, Direction::NW, Direction::SE, Direction::SW];
+pub const ALL_DIRS: [Direction; 8] = [
+    Direction::N, Direction::NE,Direction::E, Direction::SE,
+    Direction::S, Direction::SW, Direction::W, Direction::NW,
+];
 
 #[cfg(test)]
 mod tests {
