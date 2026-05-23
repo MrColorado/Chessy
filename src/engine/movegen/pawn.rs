@@ -32,6 +32,7 @@ pub(super) fn pawn_attack_from(sq: Square, color: Color) -> BitBoard {
 }
 
 fn add_pawn_targets(
+    board: &Board,
     from: Square,
     targets: BitBoard,
     promotion_rank: BitBoard,
@@ -39,17 +40,18 @@ fn add_pawn_targets(
     movelist: &mut Movelist,
 ) {
     for dest in extract_pieces_from_bitboard(targets) {
+        let captured = is_capture.then(|| board.get_piece_at(dest)).flatten();
         if dest.to_bitboard() & promotion_rank != 0 {
             for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
                 let mv = if is_capture {
-                    Move::promote_capture(from, dest, piece)
+                    Move::promote_capture(from, dest, piece, captured.unwrap().0)
                 } else {
                     Move::promote(from, dest, piece)
                 };
                 movelist.add_move(mv);
             }
         } else if is_capture {
-            movelist.add_move(Move::capture(from, dest, Piece::Pawn));
+            movelist.add_move(Move::capture(from, dest, Piece::Pawn, captured.unwrap().0));
         } else {
             movelist.add_move(Move::quiet(from, dest, Piece::Pawn));
         }
@@ -64,7 +66,7 @@ fn pawn_moves(pos: Square, effective: BitBoard, board: &Board, movelist: &mut Mo
         let step = pos_bb << 8;
         if step & occupied == 0 {
             if step & effective != 0 {
-                add_pawn_targets(pos, step, RANK_8, false, movelist);
+                add_pawn_targets(board, pos, step, RANK_8, false, movelist);
             }
             if pos_bb & RANK_2 != 0 {
                 let double_dest = step << 8;
@@ -77,7 +79,7 @@ fn pawn_moves(pos: Square, effective: BitBoard, board: &Board, movelist: &mut Mo
         let step = pos_bb >> 8;
         if step & occupied == 0 {
             if step & effective != 0 {
-                add_pawn_targets(pos, step, RANK_1, false, movelist);
+                add_pawn_targets(board, pos, step, RANK_1, false, movelist);
             }
             if pos_bb & RANK_7 != 0 {
                 let double_dest = step >> 8;
@@ -98,7 +100,7 @@ fn pawn_attacks(pos: Square, effective: BitBoard, check_mask: BitBoard, pin_mask
         let right_attack = (pos_bb & NOT_H_FILE) << 9;
         let attacks =
             (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::Black) & effective;
-        add_pawn_targets(pos, attacks, RANK_8, true, movelist);
+        add_pawn_targets(board, pos, attacks, RANK_8, true, movelist);
         if let Some(ep_sq) = board.get_en_passant_square() {
             let ep_bb = ep_sq.to_bitboard();
             if (left_attack | right_attack) & ep_bb != 0
@@ -114,7 +116,7 @@ fn pawn_attacks(pos: Square, effective: BitBoard, check_mask: BitBoard, pin_mask
         let right_attack = (pos_bb & NOT_H_FILE) >> 7;
         let attacks =
             (left_attack | right_attack) & board.get_occupied_squares_for_color(Color::White) & effective;
-        add_pawn_targets(pos, attacks, RANK_1, true, movelist);
+        add_pawn_targets(board, pos, attacks, RANK_1, true, movelist);
         if let Some(ep_sq) = board.get_en_passant_square() {
             let ep_bb = ep_sq.to_bitboard();
             if (left_attack | right_attack) & ep_bb != 0

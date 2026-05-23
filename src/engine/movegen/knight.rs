@@ -47,7 +47,6 @@ fn knight_targets(pos: BitBoard) -> BitBoard {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::square::Square;
     use super::*;
 
     fn moves_for(fen: &str) -> Movelist {

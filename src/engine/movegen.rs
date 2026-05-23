@@ -92,7 +92,8 @@ pub(super) fn add_capture_moves(
     let enemy_king = board.get_bitboard_for_piece(Piece::King, opponent);
     let captures = targets & board.get_occupied_squares_for_color(opponent) & !enemy_king;
     for dest in extract_pieces_from_bitboard(captures) {
-        movelist.add_move(Move::capture(from, dest, piece));
+        let captured = board.get_piece_at(dest);
+        movelist.add_move(Move::capture(from, dest, piece, captured.unwrap().0));
     }
 }
 

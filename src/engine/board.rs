@@ -347,14 +347,14 @@ impl Board {
 
     pub fn make_move(&mut self, mv: Move) -> IrreversibleState {
         let piece = mv.piece();
+        let captured = mv.captured();
         let is_capture = matches!(mv.kind(), MoveKind::Capture | MoveKind::PromotionCapture(_));
-        let captured_piece = is_capture.then(|| self.get_piece_at(mv.to()).map(|(p, _)| p)).flatten();
 
         let irreversibile_state = IrreversibleState {
             castling_rights: self.castling_rights,
             en_passant_square: self.en_passant_square,
             halfmove_clock: self.halfmove_clock,
-            captured_piece,
+            captured_piece: captured,
         };
 
         self.board_eval_cache += self.incremental_evaluate(mv);
@@ -367,12 +367,12 @@ impl Board {
                 self.place_piece(mv.promotion().unwrap(), color, mv.to());
             }
             MoveKind::PromotionCapture(_) => {
-                self.remove_piece(captured_piece.unwrap(), opponent_color, mv.to());
+                self.remove_piece(captured.unwrap(), opponent_color, mv.to());
                 self.remove_piece(Piece::Pawn, color, mv.from());
                 self.place_piece(mv.promotion().unwrap(), color, mv.to());
             }
             MoveKind::Capture => {
-                self.remove_piece(captured_piece.unwrap(), opponent_color, mv.to());
+                self.remove_piece(captured.unwrap(), opponent_color, mv.to());
                 self.move_piece(piece, color, mv.from(), mv.to());
             }
             MoveKind::KingsideCastle => {
@@ -548,8 +548,8 @@ impl Board {
         let color = self.get_current_player_color();
 
         let mv = if let Some(promo) = promotion {
-            if self.get_piece_at(to).is_some() {
-                Move::promote_capture(from, to, promo)
+            if let Some(captured) =  self.get_piece_at(to) {
+                Move::promote_capture(from, to, promo, captured.0)
             } else {
                 Move::promote(from, to, promo)
             }
@@ -563,8 +563,8 @@ impl Board {
             Move::en_passant(from, to)
         } else if piece == Piece::Pawn && (to.to_index() as i32 - from.to_index() as i32).abs() == 16 {
             Move::double_pawn_push(from, to)
-        } else if self.get_piece_at(to).is_some() {
-            Move::capture(from, to, piece)
+        } else if let Some(captured) =  self.get_piece_at(to) {
+            Move::capture(from, to, piece, captured.0)
         } else {
             Move::quiet(from, to, piece)
         };
@@ -649,7 +649,7 @@ mod tests {
     fn incremental_evaluate_white_capture_matches_full_eval() {
         // White pawn on e5 can capture black pawn on d6
         let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k w - - 0 1").unwrap();
-        let mv = Move::capture(Square::E5, Square::D6, Piece::Pawn);
+        let mv = Move::capture(Square::E5, Square::D6, Piece::Pawn, Piece::Pawn);
         let incremental = board.incremental_evaluate(mv);
         board.make_move(mv);
         let full = board.evaluate();
@@ -660,7 +660,7 @@ mod tests {
     fn incremental_evaluate_black_capture_matches_full_eval() {
         // Black pawn on d6 can capture white pawn on e5
         let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k b - - 0 1").unwrap();
-        let mv = Move::capture(Square::D6, Square::E5, Piece::Pawn);
+        let mv = Move::capture(Square::D6, Square::E5, Piece::Pawn, Piece::Pawn);
         let incremental = board.incremental_evaluate(mv);
         board.make_move(mv);
         let full = board.evaluate();
