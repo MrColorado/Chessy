@@ -191,6 +191,7 @@ impl fmt::Display for Move {
 #[derive(Debug, Clone)]
 pub struct Movelist {
     moves: [Move; 256],
+    scores: [i32; 256],
     count: usize,
 }
 
@@ -198,19 +199,15 @@ impl Movelist {
     pub fn new() -> Movelist {
         Movelist {
             moves: [Move::default(); 256],
+            scores: [0; 256],
             count: 0,
         }
     }
 
     pub fn add_move(&mut self, mv: Move) {
         if self.count >= 256 { return; }
-        let score =  mv.mvv_lva_score();
-        let mut i = self.count;
-        while i > 0 && self.moves[i - 1].mvv_lva_score() < score {
-            self.moves[i] = self.moves[i - 1];
-            i -= 1;
-        }
-        self.moves[i] = mv;
+        self.scores[self.count] = mv.mvv_lva_score();
+        self.moves[self.count] = mv;
         self.count += 1;
     }
 
@@ -221,19 +218,43 @@ impl Movelist {
     pub fn as_slice(&self) -> &[Move] {
         &self.moves[..self.count]
     }
+
+    pub fn sort(&mut self) {
+        let moves = &mut self.moves[..self.count];
+        let scores = &mut self.scores[..self.count];
+        // insertion sort sur les deux tableaux parallèles
+        for i in 1..moves.len() {
+            let mv = moves[i];
+            let score = scores[i];
+            let mut j = i;
+            while j > 0 && scores[j - 1] < score {
+                moves[j] = moves[j - 1];
+                scores[j] = scores[j - 1];
+                j -= 1;
+            }
+            moves[j] = mv;
+            scores[j] = score;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn sorted(mut list: Movelist) -> Vec<Move> {
+        list.sort();
+        list.as_slice().to_vec()
+    }
+
     #[test]
     fn quiet_moves_added_last() {
         let mut list = Movelist::new();
         list.add_move(Move::quiet(Square::A1, Square::A2, Piece::Pawn));
         list.add_move(Move::capture(Square::B1, Square::B2, Piece::Pawn, Piece::Queen));
-        assert_eq!(list.as_slice()[0].capture, Some(Piece::Queen));
-        assert_eq!(list.as_slice()[1].capture, None);
+        let ordered = sorted(list);
+        assert_eq!(ordered[0].capture, Some(Piece::Queen));
+        assert_eq!(ordered[1].capture, None);
     }
 
     #[test]
@@ -242,20 +263,21 @@ mod tests {
         list.add_move(Move::capture(Square::A1, Square::A2, Piece::Queen, Piece::Pawn));
         list.add_move(Move::capture(Square::B1, Square::B2, Piece::Pawn, Piece::Queen));
         list.add_move(Move::capture(Square::C1, Square::C2, Piece::Knight, Piece::Rook));
+        let ordered = sorted(list);
         // Best: Pawn x Queen, then Knight x Rook, then Queen x Pawn
-        assert_eq!(list.as_slice()[0].piece, Piece::Pawn);
-        assert_eq!(list.as_slice()[1].piece, Piece::Knight);
-        assert_eq!(list.as_slice()[2].piece, Piece::Queen);
+        assert_eq!(ordered[0].piece, Piece::Pawn);
+        assert_eq!(ordered[1].piece, Piece::Knight);
+        assert_eq!(ordered[2].piece, Piece::Queen);
     }
 
     #[test]
-    fn multiple_quiet_moves_preserve_insertion_order() {
+    fn multiple_quiet_moves_all_returned() {
         let mut list = Movelist::new();
         list.add_move(Move::quiet(Square::A1, Square::A2, Piece::Pawn));
         list.add_move(Move::quiet(Square::B1, Square::B2, Piece::Pawn));
         list.add_move(Move::quiet(Square::C1, Square::C2, Piece::Pawn));
         assert_eq!(list.len(), 3);
-        for mv in list.as_slice() {
+        for mv in sorted(list) {
             assert_eq!(mv.capture, None);
         }
     }
@@ -267,9 +289,9 @@ mod tests {
         list.add_move(Move::quiet(Square::B1, Square::B2, Piece::Pawn));
         list.add_move(Move::capture(Square::C1, Square::C2, Piece::Rook, Piece::Bishop));
         list.add_move(Move::quiet(Square::D1, Square::D2, Piece::Pawn));
-        let slice = list.as_slice();
-        assert!(slice[0].capture.is_some(), "first must be capture");
-        for mv in &slice[1..] {
+        let ordered = sorted(list);
+        assert!(ordered[0].capture.is_some(), "first must be capture");
+        for mv in &ordered[1..] {
             assert!(mv.capture.is_none(), "rest must be quiet");
         }
     }

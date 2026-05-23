@@ -39,7 +39,35 @@ const CASTLING_RIGHTS_MASK: [u8; 64] = {
     m
 };
 
-#[derive(Debug, Default, Clone, Copy)]
+const MAILBOX_EMPTY: u8 = 0xFF;
+
+fn mailbox_encode(piece: Piece, color: Color) -> u8 {
+    let p = match piece {
+        Piece::Pawn   => 0u8,
+        Piece::Knight => 1,
+        Piece::Bishop => 2,
+        Piece::Rook   => 3,
+        Piece::Queen  => 4,
+        Piece::King   => 5,
+    };
+    let c = match color { Color::White => 0u8, Color::Black => 1 };
+    p * 2 + c
+}
+
+fn mailbox_decode(v: u8) -> (Piece, Color) {
+    let piece = match v / 2 {
+        0 => Piece::Pawn,
+        1 => Piece::Knight,
+        2 => Piece::Bishop,
+        3 => Piece::Rook,
+        4 => Piece::Queen,
+        _ => Piece::King,
+    };
+    let color = if v % 2 == 0 { Color::White } else { Color::Black };
+    (piece, color)
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Board {
     white_pawns: BitBoard,
     white_knights: BitBoard,
@@ -55,12 +83,40 @@ pub struct Board {
     black_queens: BitBoard,
     black_kings: BitBoard,
 
+    mailbox: [u8; 64],
+
     halfmove_clock: u8,
     fullmove_number: u8,
     board_eval_cache: i32,
     white_to_move: bool,
     en_passant_square: Option<Square>,
     castling_rights: CastlingRights,
+}
+
+impl Default for Board {
+    fn default() -> Self {
+        Board {
+            white_pawns: 0,
+            white_knights: 0,
+            white_bishops: 0,
+            white_rooks: 0,
+            white_queens: 0,
+            white_kings: 0,
+            black_pawns: 0,
+            black_knights: 0,
+            black_bishops: 0,
+            black_rooks: 0,
+            black_queens: 0,
+            black_kings: 0,
+            mailbox: [MAILBOX_EMPTY; 64],
+            halfmove_clock: 0,
+            fullmove_number: 0,
+            board_eval_cache: 0,
+            white_to_move: true,
+            en_passant_square: None,
+            castling_rights: CastlingRights(0),
+        }
+    }
 }
 
 impl Board {
@@ -80,6 +136,7 @@ impl Board {
             black_queens: 0x0800000000000000,
             black_kings: 0x1000000000000000,
 
+            mailbox: [MAILBOX_EMPTY; 64],
             halfmove_clock: 0,
             fullmove_number: 0,
             board_eval_cache: 0,
@@ -92,6 +149,7 @@ impl Board {
                     | CastlingRights::BLACK_QUEENSIDE,
             ),
         };
+        board.rebuild_mailbox();
         board.board_eval_cache = board.evaluate();
         board
     }
@@ -163,9 +221,35 @@ impl Board {
             .parse::<u8>()
             .map_err(|_| "Invalid FEN: invalid fullmove number")?;
 
+        board.rebuild_mailbox();
         board.board_eval_cache = board.evaluate();
 
         Ok(board)
+    }
+
+    fn rebuild_mailbox(&mut self) {
+        self.mailbox = [MAILBOX_EMPTY; 64];
+        let pieces = [
+            (Piece::Pawn,   Color::White, self.white_pawns),
+            (Piece::Knight, Color::White, self.white_knights),
+            (Piece::Bishop, Color::White, self.white_bishops),
+            (Piece::Rook,   Color::White, self.white_rooks),
+            (Piece::Queen,  Color::White, self.white_queens),
+            (Piece::King,   Color::White, self.white_kings),
+            (Piece::Pawn,   Color::Black, self.black_pawns),
+            (Piece::Knight, Color::Black, self.black_knights),
+            (Piece::Bishop, Color::Black, self.black_bishops),
+            (Piece::Rook,   Color::Black, self.black_rooks),
+            (Piece::Queen,  Color::Black, self.black_queens),
+            (Piece::King,   Color::Black, self.black_kings),
+        ];
+        for (piece, color, mut bb) in pieces {
+            while bb != 0 {
+                let idx = bb.trailing_zeros() as usize;
+                self.mailbox[idx] = mailbox_encode(piece, color);
+                bb &= bb - 1;
+            }
+        }
     }
 
     pub fn get_current_player_color(&self) -> Color {
@@ -277,46 +361,8 @@ impl Board {
     }
 
     pub fn get_piece_at(&self, square: Square) -> Option<(Piece, Color)> {
-        let bit = 1u64 << square.to_index();
-        if self.white_pawns & bit != 0 {
-            return Some((Piece::Pawn, Color::White));
-        }
-        if self.white_knights & bit != 0 {
-            return Some((Piece::Knight, Color::White));
-        }
-        if self.white_bishops & bit != 0 {
-            return Some((Piece::Bishop, Color::White));
-        }
-        if self.white_rooks & bit != 0 {
-            return Some((Piece::Rook, Color::White));
-        }
-        if self.white_queens & bit != 0 {
-            return Some((Piece::Queen, Color::White));
-        }
-        if self.white_kings & bit != 0 {
-            return Some((Piece::King, Color::White));
-        }
-
-        if self.black_pawns & bit != 0 {
-            return Some((Piece::Pawn, Color::Black));
-        }
-        if self.black_knights & bit != 0 {
-            return Some((Piece::Knight, Color::Black));
-        }
-        if self.black_bishops & bit != 0 {
-            return Some((Piece::Bishop, Color::Black));
-        }
-        if self.black_rooks & bit != 0 {
-            return Some((Piece::Rook, Color::Black));
-        }
-        if self.black_queens & bit != 0 {
-            return Some((Piece::Queen, Color::Black));
-        }
-        if self.black_kings & bit != 0 {
-            return Some((Piece::King, Color::Black));
-        }
-
-        None
+        let v = self.mailbox[square.to_index()];
+        if v == MAILBOX_EMPTY { None } else { Some(mailbox_decode(v)) }
     }
 
     pub fn can_castle_kingside(&self, color: Color) -> bool {
@@ -497,6 +543,8 @@ impl Board {
             (Piece::Queen,  Color::Black) => self.black_queens  = (self.black_queens  & !from_bb) | to_bb,
             (Piece::King,   Color::Black) => self.black_kings   = (self.black_kings   & !from_bb) | to_bb,
         }
+        self.mailbox[from.to_index()] = MAILBOX_EMPTY;
+        self.mailbox[to.to_index()] = mailbox_encode(piece, color);
     }
 
     fn place_piece(&mut self, piece: Piece, color: Color, square: Square) {
@@ -515,6 +563,7 @@ impl Board {
             (Piece::Queen,  Color::Black) => self.black_queens  |= bit,
             (Piece::King,   Color::Black) => self.black_kings   |= bit,
         }
+        self.mailbox[square.to_index()] = mailbox_encode(piece, color);
     }
 
     fn remove_piece(&mut self, piece: Piece, color: Color, square: Square) {
@@ -533,6 +582,7 @@ impl Board {
             (Piece::Queen, Color::Black) => self.black_queens &= !bit,
             (Piece::King, Color::Black) => self.black_kings &= !bit,
         }
+        self.mailbox[square.to_index()] = MAILBOX_EMPTY;
     }
 
     pub fn make_squares_move(

@@ -136,6 +136,7 @@ pub fn gen_legal_moves(board: &Board) -> Movelist {
     gen_rook_moves(board, check_mask, &pin_mask, &mut movelist);
     gen_queen_moves(board, check_mask, &pin_mask, &mut movelist);
 
+    movelist.sort();
     movelist
 }
 
