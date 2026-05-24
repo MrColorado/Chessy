@@ -622,41 +622,53 @@ impl Board {
         Ok(self.make_move(mv))
     }
 
-    fn evaluate(&mut self) -> i32 {
+    fn evaluate(&self) -> i32 {
         let mut score = 0;
         for color in [Color::White, Color::Black] {
+            let sign = if color == Color::White { 1 } else { -1 };
             for piece in Piece::ALL {
-                let count = self.get_bitboard_for_piece(piece, color).count_ones() as i32;
-                let value = Piece::value(piece);
-                if color == Color::White {
-                    score += count * value;
-                } else {
-                    score -= count * value;
+                let mut bb = self.get_bitboard_for_piece(piece, color);
+                while bb != 0 {
+                    let sq = Square(bb.trailing_zeros() as u8);
+                    score += sign * (piece.value() + piece.pst_bonus(color, sq));
+                    bb &= bb - 1;
                 }
             }
         }
         score
     }
 
-    fn incremental_evaluate(&mut self, mv: Move) -> i32 {
+    fn incremental_evaluate(&self, mv: Move) -> i32 {
+        let color = self.get_current_player_color();
+        let opponent = self.get_opponent_color();
+        let sign = if color == Color::White { 1 } else { -1 };
+        let piece = mv.piece();
+
+        let positional_delta = piece.pst_bonus(color, mv.to()) - piece.pst_bonus(color, mv.from());
+
         match mv.kind() {
             MoveKind::Promotion(promo) => {
-                if self.get_current_player_color() == Color::White {
-                    promo.value() - Piece::Pawn.value()
-                } else {
-                    Piece::Pawn.value() - promo.value()
-                }
+                sign * (promo.value() + promo.pst_bonus(color, mv.to())
+                    - Piece::Pawn.value() - piece.pst_bonus(color, mv.from()))
+            }
+            MoveKind::PromotionCapture(promo) => {
+                let captured = mv.captured().unwrap();
+                sign * (promo.value() + promo.pst_bonus(color, mv.to())
+                    - Piece::Pawn.value() - piece.pst_bonus(color, mv.from())
+                    + captured.value() + captured.pst_bonus(opponent, mv.to()))
             }
             MoveKind::Capture => {
-                let captured_piece = self.get_piece_at(mv.to()).unwrap().0;
-                let captured_value = captured_piece.value();
-                if self.get_current_player_color() == Color::White {
-                    captured_value
-                } else {
-                    -captured_value
-                }
+                let captured = mv.captured().unwrap();
+                sign * (positional_delta + captured.value() + captured.pst_bonus(opponent, mv.to()))
             }
-            _ => 0,
+            MoveKind::EnPassant => {
+                let captured_sq = match color {
+                    Color::White => Square((mv.to().to_index() - 8) as u8),
+                    Color::Black => Square((mv.to().to_index() + 8) as u8),
+                };
+                sign * (positional_delta + Piece::Pawn.value() + Piece::Pawn.pst_bonus(opponent, captured_sq))
+            }
+            _ => sign * positional_delta,
         }
     }
 }
@@ -675,24 +687,16 @@ mod tests {
 
     #[test]
     fn evaluate_white_up_a_pawn() {
-        // Black is missing one pawn
+        // Black is missing one pawn — score must be positive regardless of PST
         let board = Board::from_fen("rnbqkbnr/ppppppp1/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(board.board_eval_cache, 100);
+        assert!(board.board_eval_cache > 0);
     }
 
     #[test]
     fn evaluate_black_up_a_queen() {
-        // White is missing its queen
+        // White is missing its queen — score must be negative regardless of PST
         let board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1").unwrap();
-        assert_eq!(board.board_eval_cache, -900);
-    }
-
-    #[test]
-    fn incremental_evaluate_quiet_move_unchanged() {
-        let mut board = Board::new();
-        let mv = Move::quiet(Square::E2, Square::E4, Piece::Pawn);
-        let incremental = board.incremental_evaluate(mv);
-        assert_eq!(incremental, board.board_eval_cache);
+        assert!(board.board_eval_cache < 0);
     }
 
     #[test]
@@ -700,10 +704,10 @@ mod tests {
         // White pawn on e5 can capture black pawn on d6
         let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k w - - 0 1").unwrap();
         let mv = Move::capture(Square::E5, Square::D6, Piece::Pawn, Piece::Pawn);
-        let incremental = board.incremental_evaluate(mv);
+        let before = board.board_eval_cache;
+        let delta = board.incremental_evaluate(mv);
         board.make_move(mv);
-        let full = board.evaluate();
-        assert_eq!(incremental, full);
+        assert_eq!(before + delta, board.board_eval_cache);
     }
 
     #[test]
@@ -711,9 +715,19 @@ mod tests {
         // Black pawn on d6 can capture white pawn on e5
         let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k b - - 0 1").unwrap();
         let mv = Move::capture(Square::D6, Square::E5, Piece::Pawn, Piece::Pawn);
-        let incremental = board.incremental_evaluate(mv);
+        let before = board.board_eval_cache;
+        let delta = board.incremental_evaluate(mv);
         board.make_move(mv);
-        let full = board.evaluate();
-        assert_eq!(incremental, full);
+        assert_eq!(before + delta, board.board_eval_cache);
+    }
+
+    #[test]
+    fn incremental_evaluate_quiet_move_matches_full_eval() {
+        let mut board = Board::from_fen("8/8/8/8/8/8/4P3/4K2k w - - 0 1").unwrap();
+        let mv = Move::quiet(Square::E2, Square::E4, Piece::Pawn);
+        let before = board.board_eval_cache;
+        let delta = board.incremental_evaluate(mv);
+        board.make_move(mv);
+        assert_eq!(before + delta, board.board_eval_cache);
     }
 }
