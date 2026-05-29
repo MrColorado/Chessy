@@ -87,7 +87,9 @@ pub struct Board {
 
     halfmove_clock: u8,
     fullmove_number: u8,
-    board_eval_cache: i32,
+    mg_eval: i32,
+    eg_eval: i32,
+    game_phase: i32,
     white_to_move: bool,
     en_passant_square: Option<Square>,
     castling_rights: CastlingRights,
@@ -111,7 +113,9 @@ impl Default for Board {
             mailbox: [MAILBOX_EMPTY; 64],
             halfmove_clock: 0,
             fullmove_number: 0,
-            board_eval_cache: 0,
+            mg_eval: 0,
+            eg_eval: 0,
+            game_phase: 0,
             white_to_move: true,
             en_passant_square: None,
             castling_rights: CastlingRights(0),
@@ -139,7 +143,9 @@ impl Board {
             mailbox: [MAILBOX_EMPTY; 64],
             halfmove_clock: 0,
             fullmove_number: 0,
-            board_eval_cache: 0,
+            mg_eval: 0,
+            eg_eval: 0,
+            game_phase: 0,
             white_to_move: true,
             en_passant_square: None,
             castling_rights: CastlingRights(
@@ -150,7 +156,10 @@ impl Board {
             ),
         };
         board.rebuild_mailbox();
-        board.board_eval_cache = board.evaluate();
+        board.game_phase = board.compute_game_phase();
+        let (mg, eg) = board.evaluate();
+        board.mg_eval = mg;
+        board.eg_eval = eg;
         board
     }
 
@@ -222,7 +231,10 @@ impl Board {
             .map_err(|_| "Invalid FEN: invalid fullmove number")?;
 
         board.rebuild_mailbox();
-        board.board_eval_cache = board.evaluate();
+        board.game_phase = board.compute_game_phase();
+        let (mg, eg) = board.evaluate();
+        board.mg_eval = mg;
+        board.eg_eval = eg;
 
         Ok(board)
     }
@@ -289,12 +301,10 @@ impl Board {
     }
 
     pub fn get_board_evaluation(&self) -> i32 {
-        let board_eval = self.board_eval_cache;
-        if self.get_current_player_color() == Color::White {
-            board_eval
-        } else {
-            -board_eval
-        }
+        let mg_phase = self.game_phase;
+        let eg_phase = 128 - mg_phase;
+        let score = (self.mg_eval * mg_phase + self.eg_eval * eg_phase) >> 7;
+        if self.get_current_player_color() == Color::White { score } else { -score }
     }
 
     pub fn get_king_square(&self, color: Color) -> Square {
@@ -403,22 +413,32 @@ impl Board {
             captured_piece: captured,
         };
 
-        self.board_eval_cache += self.incremental_evaluate(mv);
-
         let color = self.get_current_player_color();
-        let opponent_color = self.get_opponent_color();
+        let opponent = self.get_opponent_color();
+        let (dmg, deg) = Self::pst_delta(mv, captured, color, opponent);
+        self.mg_eval += dmg;
+        self.eg_eval += deg;
+
+        // update game_phase: captures remove material, promotions swap pawn (weight=0) for piece
+        if let Some(cap) = captured {
+            self.game_phase = (self.game_phase - cap.phase_weight()).max(0);
+        }
+        if let MoveKind::Promotion(promo) | MoveKind::PromotionCapture(promo) = mv.kind() {
+            self.game_phase = (self.game_phase + promo.phase_weight()).min(128);
+        }
+
         match mv.kind() {
             MoveKind::Promotion(_) => {
                 self.remove_piece(Piece::Pawn, color, mv.from());
                 self.place_piece(mv.promotion().unwrap(), color, mv.to());
             }
             MoveKind::PromotionCapture(_) => {
-                self.remove_piece(captured.unwrap(), opponent_color, mv.to());
+                self.remove_piece(captured.unwrap(), opponent, mv.to());
                 self.remove_piece(Piece::Pawn, color, mv.from());
                 self.place_piece(mv.promotion().unwrap(), color, mv.to());
             }
             MoveKind::Capture => {
-                self.remove_piece(captured.unwrap(), opponent_color, mv.to());
+                self.remove_piece(captured.unwrap(), opponent, mv.to());
                 self.move_piece(piece, color, mv.from(), mv.to());
             }
             MoveKind::KingsideCastle => {
@@ -443,7 +463,7 @@ impl Board {
                     Color::White => Square((mv.to().to_index() - 8) as u8),
                     Color::Black => Square((mv.to().to_index() + 8) as u8),
                 };
-                self.remove_piece(Piece::Pawn, opponent_color, captured_pawn_square);
+                self.remove_piece(Piece::Pawn, opponent, captured_pawn_square);
             }
             _ => {
                 self.move_piece(piece, color, mv.from(), mv.to());
@@ -478,7 +498,8 @@ impl Board {
         self.fullmove_number -= if self.white_to_move { 0 } else { 1 };
 
         let color = self.get_current_player_color();
-        let opponent_color = self.get_opponent_color();
+        let opponent = self.get_opponent_color();
+        let piece = mv.piece();
 
         match mv.kind() {
             MoveKind::Promotion(_) => {
@@ -488,11 +509,11 @@ impl Board {
             MoveKind::PromotionCapture(_) => {
                 self.remove_piece(mv.promotion().unwrap(), color, mv.to());
                 self.place_piece(Piece::Pawn, color, mv.from());
-                self.place_piece(state.captured_piece.unwrap(), opponent_color, mv.to());
+                self.place_piece(state.captured_piece.unwrap(), opponent, mv.to());
             }
             MoveKind::Capture => {
-                self.move_piece(mv.piece(), color, mv.to(), mv.from());
-                self.place_piece(state.captured_piece.unwrap(), opponent_color, mv.to());
+                self.move_piece(piece, color, mv.to(), mv.from());
+                self.place_piece(state.captured_piece.unwrap(), opponent, mv.to());
             }
             MoveKind::KingsideCastle => {
                 let (rook_from, rook_to) = match color {
@@ -512,17 +533,29 @@ impl Board {
             }
             MoveKind::EnPassant => {
                 self.move_piece(Piece::Pawn, color, mv.to(), mv.from());
-                let captured_pawn_square = match color {
+                let cap_sq = match color {
                     Color::White => Square((mv.to().to_index() - 8) as u8),
                     Color::Black => Square((mv.to().to_index() + 8) as u8),
                 };
-                self.place_piece(Piece::Pawn, opponent_color, captured_pawn_square);
+                self.place_piece(Piece::Pawn, opponent, cap_sq);
             }
             _ => {
-                self.move_piece(mv.piece(), color, mv.to(), mv.from());
+                self.move_piece(piece, color, mv.to(), mv.from());
             }
         }
-        self.board_eval_cache -= self.incremental_evaluate(mv);
+
+        // restore game_phase (inverse of make_move)
+        if let Some(cap) = mv.captured() {
+            self.game_phase = (self.game_phase + cap.phase_weight()).min(128);
+        }
+        if let MoveKind::Promotion(promo) | MoveKind::PromotionCapture(promo) = mv.kind() {
+            self.game_phase = (self.game_phase - promo.phase_weight()).max(0);
+        }
+
+        // undo eval deltas (mirror of make_move)
+        let (dmg, deg) = Self::pst_delta(mv, state.captured_piece, color, opponent);
+        self.mg_eval -= dmg;
+        self.eg_eval -= deg;
     }
 
     fn move_piece(&mut self, piece: Piece, color: Color, from: Square, to: Square) {
@@ -622,54 +655,100 @@ impl Board {
         Ok(self.make_move(mv))
     }
 
-    fn evaluate(&self) -> i32 {
-        let mut score = 0;
+    fn compute_game_phase(&self) -> i32 {
+        let mut phase = 0;
+        for color in [Color::White, Color::Black] {
+            for piece in Piece::ALL {
+                let count = self.get_bitboard_for_piece(piece, color).count_ones() as i32;
+                phase += count * piece.phase_weight();
+            }
+        }
+        phase.min(128)
+    }
+
+    fn evaluate(&self) -> (i32, i32) {
+        let mut mg = 0i32;
+        let mut eg = 0i32;
         for color in [Color::White, Color::Black] {
             let sign = if color == Color::White { 1 } else { -1 };
             for piece in Piece::ALL {
                 let mut bb = self.get_bitboard_for_piece(piece, color);
                 while bb != 0 {
                     let sq = Square(bb.trailing_zeros() as u8);
-                    score += sign * (piece.value() + piece.pst_bonus(color, sq));
+                    mg += sign * piece.mg_table(color, sq);
+                    eg += sign * piece.eg_table(color, sq);
                     bb &= bb - 1;
                 }
             }
         }
-        score
+        (mg, eg)
     }
 
-    fn incremental_evaluate(&self, mv: Move) -> i32 {
-        let color = self.get_current_player_color();
-        let opponent = self.get_opponent_color();
+    fn pst_delta(mv: Move, captured: Option<Piece>, color: Color, opponent: Color) -> (i32, i32) {
+        let (mg_t, eg_t) = crate::engine::piece::mg_eg_tables();
+        let mgt = |p: Piece, c: Color, sq: Square| mg_t[p.index()][c.index()][sq.to_index()];
+        let egt = |p: Piece, c: Color, sq: Square| eg_t[p.index()][c.index()][sq.to_index()];
         let sign = if color == Color::White { 1 } else { -1 };
         let piece = mv.piece();
-
-        let positional_delta = piece.pst_bonus(color, mv.to()) - piece.pst_bonus(color, mv.from());
-
-        match mv.kind() {
-            MoveKind::Promotion(promo) => {
-                sign * (promo.value() + promo.pst_bonus(color, mv.to())
-                    - Piece::Pawn.value() - piece.pst_bonus(color, mv.from()))
-            }
+        let (mg, eg) = match mv.kind() {
+            MoveKind::Promotion(promo) => (
+                mgt(promo, color, mv.to()) - mgt(Piece::Pawn, color, mv.from()),
+                egt(promo, color, mv.to()) - egt(Piece::Pawn, color, mv.from()),
+            ),
             MoveKind::PromotionCapture(promo) => {
-                let captured = mv.captured().unwrap();
-                sign * (promo.value() + promo.pst_bonus(color, mv.to())
-                    - Piece::Pawn.value() - piece.pst_bonus(color, mv.from())
-                    + captured.value() + captured.pst_bonus(opponent, mv.to()))
+                let cap = captured.unwrap();
+                (
+                    mgt(promo, color, mv.to()) - mgt(Piece::Pawn, color, mv.from()) + mgt(cap, opponent, mv.to()),
+                    egt(promo, color, mv.to()) - egt(Piece::Pawn, color, mv.from()) + egt(cap, opponent, mv.to()),
+                )
             }
             MoveKind::Capture => {
-                let captured = mv.captured().unwrap();
-                sign * (positional_delta + captured.value() + captured.pst_bonus(opponent, mv.to()))
+                let cap = captured.unwrap();
+                (
+                    mgt(piece, color, mv.to()) - mgt(piece, color, mv.from()) + mgt(cap, opponent, mv.to()),
+                    egt(piece, color, mv.to()) - egt(piece, color, mv.from()) + egt(cap, opponent, mv.to()),
+                )
             }
             MoveKind::EnPassant => {
-                let captured_sq = match color {
+                let cap_sq = match color {
                     Color::White => Square((mv.to().to_index() - 8) as u8),
                     Color::Black => Square((mv.to().to_index() + 8) as u8),
                 };
-                sign * (positional_delta + Piece::Pawn.value() + Piece::Pawn.pst_bonus(opponent, captured_sq))
+                (
+                    mgt(piece, color, mv.to()) - mgt(piece, color, mv.from()) + mgt(Piece::Pawn, opponent, cap_sq),
+                    egt(piece, color, mv.to()) - egt(piece, color, mv.from()) + egt(Piece::Pawn, opponent, cap_sq),
+                )
             }
-            _ => sign * positional_delta,
-        }
+            MoveKind::KingsideCastle => {
+                let (rook_from, rook_to) = match color {
+                    Color::White => (Square::H1, Square::F1),
+                    Color::Black => (Square::H8, Square::F8),
+                };
+                (
+                    mgt(piece, color, mv.to()) - mgt(piece, color, mv.from())
+                        + mgt(Piece::Rook, color, rook_to) - mgt(Piece::Rook, color, rook_from),
+                    egt(piece, color, mv.to()) - egt(piece, color, mv.from())
+                        + egt(Piece::Rook, color, rook_to) - egt(Piece::Rook, color, rook_from),
+                )
+            }
+            MoveKind::QueensideCastle => {
+                let (rook_from, rook_to) = match color {
+                    Color::White => (Square::A1, Square::D1),
+                    Color::Black => (Square::A8, Square::D8),
+                };
+                (
+                    mgt(piece, color, mv.to()) - mgt(piece, color, mv.from())
+                        + mgt(Piece::Rook, color, rook_to) - mgt(Piece::Rook, color, rook_from),
+                    egt(piece, color, mv.to()) - egt(piece, color, mv.from())
+                        + egt(Piece::Rook, color, rook_to) - egt(Piece::Rook, color, rook_from),
+                )
+            }
+            _ => (
+                mgt(piece, color, mv.to()) - mgt(piece, color, mv.from()),
+                egt(piece, color, mv.to()) - egt(piece, color, mv.from()),
+            ),
+        };
+        (sign * mg, sign * eg)
     }
 }
 
@@ -682,52 +761,52 @@ mod tests {
     #[test]
     fn evaluate_starting_position_is_zero() {
         let board = Board::new();
-        assert_eq!(board.board_eval_cache, 0);
+        assert_eq!(board.get_board_evaluation(), 0);
     }
 
     #[test]
     fn evaluate_white_up_a_pawn() {
-        // Black is missing one pawn — score must be positive regardless of PST
         let board = Board::from_fen("rnbqkbnr/ppppppp1/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert!(board.board_eval_cache > 0);
+        assert!(board.get_board_evaluation() > 0);
     }
 
     #[test]
     fn evaluate_black_up_a_queen() {
-        // White is missing its queen — score must be negative regardless of PST
         let board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1").unwrap();
-        assert!(board.board_eval_cache < 0);
+        assert!(board.get_board_evaluation() < 0);
     }
 
     #[test]
-    fn incremental_evaluate_white_capture_matches_full_eval() {
-        // White pawn on e5 can capture black pawn on d6
+    fn make_unmake_capture_restores_eval() {
         let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k w - - 0 1").unwrap();
         let mv = Move::capture(Square::E5, Square::D6, Piece::Pawn, Piece::Pawn);
-        let before = board.board_eval_cache;
-        let delta = board.incremental_evaluate(mv);
-        board.make_move(mv);
-        assert_eq!(before + delta, board.board_eval_cache);
+        let before = board.get_board_evaluation();
+        let state = board.make_move(mv);
+        board.unmake_move(mv, state);
+        assert_eq!(board.get_board_evaluation(), before);
     }
 
     #[test]
-    fn incremental_evaluate_black_capture_matches_full_eval() {
-        // Black pawn on d6 can capture white pawn on e5
-        let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k b - - 0 1").unwrap();
-        let mv = Move::capture(Square::D6, Square::E5, Piece::Pawn, Piece::Pawn);
-        let before = board.board_eval_cache;
-        let delta = board.incremental_evaluate(mv);
-        board.make_move(mv);
-        assert_eq!(before + delta, board.board_eval_cache);
-    }
-
-    #[test]
-    fn incremental_evaluate_quiet_move_matches_full_eval() {
+    fn make_unmake_quiet_restores_eval() {
         let mut board = Board::from_fen("8/8/8/8/8/8/4P3/4K2k w - - 0 1").unwrap();
         let mv = Move::quiet(Square::E2, Square::E4, Piece::Pawn);
-        let before = board.board_eval_cache;
-        let delta = board.incremental_evaluate(mv);
+        let before = board.get_board_evaluation();
+        let state = board.make_move(mv);
+        board.unmake_move(mv, state);
+        assert_eq!(board.get_board_evaluation(), before);
+    }
+
+    #[test]
+    fn make_move_eval_matches_full_eval() {
+        let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k w - - 0 1").unwrap();
+        let mv = Move::capture(Square::E5, Square::D6, Piece::Pawn, Piece::Pawn);
         board.make_move(mv);
-        assert_eq!(before + delta, board.board_eval_cache);
+        let incremental = board.get_board_evaluation();
+        let (mg, eg) = board.evaluate();
+        let mg_phase = board.game_phase;
+        let eg_phase = 128 - mg_phase;
+        let full = (mg * mg_phase + eg * eg_phase) >> 7;
+        let full_from_white = if board.get_current_player_color() == Color::White { full } else { -full };
+        assert_eq!(incremental, full_from_white);
     }
 }
