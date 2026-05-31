@@ -9,8 +9,10 @@ use super::movegen::gen_legal_moves;
 use super::mv::Move;
 use super::rule;
 
+const MAX_PLY: usize = 128;
+
 pub fn search(mut board: Board, stop_flag: Arc<AtomicBool>, tx: Sender<Option<Move>>) {
-    let searcher = Searcher::new(stop_flag.clone());
+    let mut searcher = Searcher::new(stop_flag.clone());
     let mut best_move = None;
     let mut depth = 1;
 
@@ -22,7 +24,7 @@ pub fn search(mut board: Board, stop_flag: Arc<AtomicBool>, tx: Sender<Option<Mo
 
         for mv in gen_legal_moves(&board) {
             let state = board.make_move(mv);
-            let score = -searcher.negamax(&mut board, depth - 1, -beta, -alpha);
+            let score = -searcher.negamax(&mut board, depth - 1, 1, -beta, -alpha);
             board.unmake_move(mv, state);
 
             if stop_flag.load(Ordering::Relaxed) {
@@ -48,20 +50,31 @@ pub fn search(mut board: Board, stop_flag: Arc<AtomicBool>, tx: Sender<Option<Mo
 }
 
 pub fn negamax_bench(board: &mut Board, depth: i32) -> i32 {
-    let searcher = Searcher::new(Arc::new(AtomicBool::new(false)));
-    searcher.negamax(board, depth, i32::MIN + 1, i32::MAX)
+    let mut searcher = Searcher::new(Arc::new(AtomicBool::new(false)));
+    searcher.negamax(board, depth, 0, i32::MIN + 1, i32::MAX)
 }
 
 struct Searcher {
     stop_flag: Arc<AtomicBool>,
+    killers: [[Option<Move>; 2]; MAX_PLY],
 }
 
 impl Searcher {
     pub fn new(stop_flag: Arc<AtomicBool>) -> Searcher {
-        Searcher { stop_flag }
+        Searcher {
+            stop_flag,
+            killers: [[None; 2]; MAX_PLY],
+        }
     }
 
-    fn negamax(&self, board: &mut Board, depth: i32, mut alpha: i32, beta: i32) -> i32 {
+    fn negamax(
+        &mut self,
+        board: &mut Board,
+        depth: i32,
+        ply: usize,
+        mut alpha: i32,
+        beta: i32,
+    ) -> i32 {
         if self.stop_flag.load(Ordering::Relaxed) {
             return 0;
         }
@@ -70,12 +83,12 @@ impl Searcher {
             return 0;
         }
 
-        if depth == 0 {
+        if depth == 0 || ply >= MAX_PLY {
             return board.get_board_evaluation();
         }
 
         let color = board.get_current_player_color();
-        let legal_moves = gen_legal_moves(&board);
+        let mut legal_moves = gen_legal_moves(&board);
         if legal_moves.len() == 0 {
             return if rule::is_in_check(&board, color) {
                 i32::MIN + 1
@@ -83,11 +96,13 @@ impl Searcher {
                 0
             };
         }
+        legal_moves.rescore_with_killers(&self.killers[ply]);
+        legal_moves.sort();
 
         let mut best_score = i32::MIN + 1;
         for mv in legal_moves {
             let state = board.make_move(mv);
-            let score = -self.negamax(board, depth - 1, -beta, -alpha);
+            let score = -self.negamax(board, depth - 1, ply + 1, -beta, -alpha);
             board.unmake_move(mv, state);
 
             if score > best_score {
@@ -97,6 +112,10 @@ impl Searcher {
                 }
             }
             if score >= beta {
+                if mv.captured().is_none() && self.killers[ply][0] != Some(mv) {
+                    self.killers[ply][1] = self.killers[ply][0];
+                    self.killers[ply][0] = Some(mv);
+                }
                 return best_score;
             }
         }
@@ -112,9 +131,9 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     fn eval(fen: &str, depth: i32) -> i32 {
-        let searcher = Searcher::new(Arc::new(AtomicBool::new(false)));
+        let mut searcher = Searcher::new(Arc::new(AtomicBool::new(false)));
         let mut board = Board::from_fen(fen).unwrap();
-        searcher.negamax(&mut board, depth, i32::MIN + 1, i32::MAX)
+        searcher.negamax(&mut board, depth, 0, i32::MIN + 1, i32::MAX)
     }
 
     #[test]

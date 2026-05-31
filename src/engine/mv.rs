@@ -179,6 +179,9 @@ impl Move {
     }
 }
 
+const KILLER_PRIMARY_SCORE: i32 = -1_000;
+const KILLER_SECONDARY_SCORE: i32 = -1_001;
+
 impl fmt::Display for Move {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.promotion() {
@@ -217,6 +220,20 @@ impl Movelist {
 
     pub fn as_slice(&self) -> &[Move] {
         &self.moves[..self.count]
+    }
+
+    pub fn rescore_with_killers(&mut self, killers: &[Option<Move>; 2]) {
+        for i in 0..self.count {
+            if self.scores[i] != i32::MIN {
+                continue; // capture: on garde le score MVV-LVA
+            }
+            let mv = self.moves[i];
+            if Some(mv) == killers[0] {
+                self.scores[i] = KILLER_PRIMARY_SCORE;
+            } else if Some(mv) == killers[1] {
+                self.scores[i] = KILLER_SECONDARY_SCORE;
+            }
+        }
     }
 
     pub fn sort(&mut self) {
@@ -280,6 +297,47 @@ mod tests {
         for mv in sorted(list) {
             assert_eq!(mv.capture, None);
         }
+    }
+
+    #[test]
+    fn killer_moves_ordered_before_other_quiets() {
+        let mut list = Movelist::new();
+        let q1 = Move::quiet(Square::A1, Square::A2, Piece::Pawn);
+        let killer = Move::quiet(Square::B1, Square::B2, Piece::Pawn);
+        let q3 = Move::quiet(Square::C1, Square::C2, Piece::Pawn);
+        let cap = Move::capture(Square::D1, Square::D2, Piece::Rook, Piece::Bishop);
+        list.add_move(q1);
+        list.add_move(killer);
+        list.add_move(q3);
+        list.add_move(cap);
+        list.rescore_with_killers(&[Some(killer), None]);
+        let ordered = sorted(list);
+        assert_eq!(ordered[0], cap, "capture must come first");
+        assert_eq!(ordered[1], killer, "killer must come before non-killer quiets");
+        assert!(ordered[2].captured().is_none() && ordered[3].captured().is_none());
+    }
+
+    #[test]
+    fn killer_primary_before_secondary() {
+        let mut list = Movelist::new();
+        let primary = Move::quiet(Square::A1, Square::A2, Piece::Pawn);
+        let secondary = Move::quiet(Square::B1, Square::B2, Piece::Pawn);
+        list.add_move(secondary);
+        list.add_move(primary);
+        list.rescore_with_killers(&[Some(primary), Some(secondary)]);
+        let ordered = sorted(list);
+        assert_eq!(ordered[0], primary);
+        assert_eq!(ordered[1], secondary);
+    }
+
+    #[test]
+    fn killers_not_applied_to_captures() {
+        let mut list = Movelist::new();
+        let cap = Move::capture(Square::A1, Square::A2, Piece::Pawn, Piece::Queen);
+        list.add_move(cap);
+        // même si on passe la capture comme "killer", son score MVV-LVA doit rester intact
+        list.rescore_with_killers(&[Some(cap), None]);
+        assert_eq!(list.scores[0], cap.mvv_lva_score());
     }
 
     #[test]
