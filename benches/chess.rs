@@ -1,16 +1,15 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use chess::engine::board::Board;
 use chess::engine::movegen::gen_legal_moves;
 use chess::engine::rule::perft;
 use chess::engine::searcher::negamax_bench;
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 
 fn startpos() -> Board {
     Board::new()
 }
 
 fn kiwipete() -> Board {
-    Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1")
-        .unwrap()
+    Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1").unwrap()
 }
 
 fn pos3() -> Board {
@@ -47,9 +46,7 @@ fn bench_perft(c: &mut Criterion) {
     g.bench_function("kiwipete/d3", |b| {
         b.iter(|| perft(black_box(&mut kiwipete()), 3))
     });
-    g.bench_function("pos3/d4", |b| {
-        b.iter(|| perft(black_box(&mut pos3()), 4))
-    });
+    g.bench_function("pos3/d4", |b| b.iter(|| perft(black_box(&mut pos3()), 4)));
 
     g.finish();
 }
@@ -65,6 +62,12 @@ fn bench_search(c: &mut Criterion) {
     });
     g.bench_function("kiwipete/d3", |b| {
         b.iter(|| negamax_bench(black_box(&mut kiwipete()), 3))
+    });
+    g.bench_function("startpos/d5", |b| {
+        b.iter(|| negamax_bench(black_box(&mut startpos()), 5))
+    });
+    g.bench_function("kiwipete/d4", |b| {
+        b.iter(|| negamax_bench(black_box(&mut kiwipete()), 4))
     });
 
     g.finish();

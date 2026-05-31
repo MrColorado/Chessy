@@ -21,6 +21,20 @@ pub(super) fn gen_queen_moves(board: &Board, check_mask: BitBoard, pin_mask: &[u
     }
 }
 
+pub(super) fn gen_queen_captures(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
+    let rook_table = get_rook_table();
+    let bishop_table = get_bishop_table();
+    let color = board.get_current_player_color();
+    let queens = board.get_bitboard_for_piece(Piece::Queen, color);
+    let occupancy = board.get_occupied_squares();
+
+    for sq in extract_pieces_from_bitboard(queens) {
+        let effective = check_mask & pin_mask[sq.to_index()];
+        let targets = (rook_table.attacks(sq, occupancy) | bishop_table.attacks(sq, occupancy)) & effective;
+        add_capture_moves(sq, targets, Piece::Queen, board, movelist);
+    }
+}
+
 pub(super) fn gen_queen_attacks(board: &Board, color: Color, occupancy: BitBoard) -> BitBoard {
     let rook_table = get_rook_table();
     let bishop_table = get_bishop_table();

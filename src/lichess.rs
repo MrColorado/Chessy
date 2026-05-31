@@ -34,16 +34,22 @@ enum LichessEvent {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ChallengeInfo {
     id: String,
     variant: Variant,
-    #[serde(default)]
-    direction: String,
+    time_control: TimeControl,
 }
 
 #[derive(Debug, Deserialize)]
 struct Variant {
     key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TimeControl {
+    #[serde(rename = "type")]
+    kind: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,6 +222,15 @@ impl LichessClient {
 
     async fn accept_challenge(&self, id: &str) -> anyhow::Result<()> {
         self.post_empty(&format!("/api/challenge/{id}/accept")).await
+    }
+
+    async fn decline_challenge(&self, id: &str, reason: &str) -> anyhow::Result<()> {
+        self.post_form(
+            &format!("/api/challenge/{id}/decline"),
+            &[("reason", reason.to_string())],
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn send_challenge(
@@ -492,13 +507,35 @@ async fn run_event_loop(
             LichessEvent::Challenge { challenge } => {
                 let auto = *state.auto_accept.lock().unwrap();
                 let busy = state.active_games.lock().unwrap().len() >= state.max_games;
-                if auto && !busy && challenge.variant.key == "standard" && challenge.direction == "in" {
-                    log::info!("[lichess] accepting challenge {}", challenge.id);
-                    if let Err(e) = client.accept_challenge(&challenge.id).await {
-                        log::error!("[lichess] accept failed: {e:#}");
+                let real_time = challenge.time_control.kind == "clock";
+                let standard = challenge.variant.key == "standard";
+
+                if !real_time {
+                    log::info!(
+                        "[lichess] declining challenge {} ({} time control)",
+                        challenge.id, challenge.time_control.kind
+                    );
+                    if let Err(e) = client.decline_challenge(&challenge.id, "timeControl").await {
+                        log::debug!("[lichess] decline failed: {e:#}");
+                    }
+                } else if !standard {
+                    log::info!(
+                        "[lichess] declining challenge {} (variant {})",
+                        challenge.id, challenge.variant.key
+                    );
+                    if let Err(e) = client.decline_challenge(&challenge.id, "variant").await {
+                        log::debug!("[lichess] decline failed: {e:#}");
                     }
                 } else if busy {
-                    log::info!("[lichess] ignoring challenge {} (already in a game)", challenge.id);
+                    log::info!("[lichess] declining challenge {} (already in a game)", challenge.id);
+                    if let Err(e) = client.decline_challenge(&challenge.id, "later").await {
+                        log::debug!("[lichess] decline failed: {e:#}");
+                    }
+                } else if auto {
+                    log::info!("[lichess] accepting challenge {}", challenge.id);
+                    if let Err(e) = client.accept_challenge(&challenge.id).await {
+                        log::debug!("[lichess] accept failed: {e:#}");
+                    }
                 }
             }
             LichessEvent::GameStart { game } => {

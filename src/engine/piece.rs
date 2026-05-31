@@ -30,6 +30,79 @@ impl Color {
     }
 }
 
+// Michniewski PST — White perspective, index 0 = a1, 63 = h8 (rank1..rank8, fileA..fileH)
+#[rustfmt::skip]
+static PAWN_TABLE: [i32; 64] = [
+     0,  0,  0,  0,  0,  0,  0,  0,
+     5, 10, 10,-20,-20, 10, 10,  5,
+     5, -5,-10,  0,  0,-10, -5,  5,
+     0,  0,  0, 20, 20,  0,  0,  0,
+     5,  5, 10, 25, 25, 10,  5,  5,
+    10, 10, 20, 30, 30, 20, 10, 10,
+    50, 50, 50, 50, 50, 50, 50, 50,
+     0,  0,  0,  0,  0,  0,  0,  0,
+];
+
+#[rustfmt::skip]
+static KNIGHT_TABLE: [i32; 64] = [
+    -50,-40,-30,-30,-30,-30,-40,-50,
+    -40,-20,  0,  5,  5,  0,-20,-40,
+    -30,  5, 10, 15, 15, 10,  5,-30,
+    -30,  0, 15, 20, 20, 15,  0,-30,
+    -30,  5, 15, 20, 20, 15,  5,-30,
+    -30,  0, 10, 15, 15, 10,  0,-30,
+    -40,-20,  0,  0,  0,  0,-20,-40,
+    -50,-40,-30,-30,-30,-30,-40,-50,
+];
+
+#[rustfmt::skip]
+static BISHOP_TABLE: [i32; 64] = [
+    -20,-10,-10,-10,-10,-10,-10,-20,
+    -10,  5,  0,  0,  0,  0,  5,-10,
+    -10, 10, 10, 10, 10, 10, 10,-10,
+    -10,  0, 10, 10, 10, 10,  0,-10,
+    -10,  5,  5, 10, 10,  5,  5,-10,
+    -10,  0,  5, 10, 10,  5,  0,-10,
+    -10,  0,  0,  0,  0,  0,  0,-10,
+    -20,-10,-10,-10,-10,-10,-10,-20,
+];
+
+#[rustfmt::skip]
+static ROOK_TABLE: [i32; 64] = [
+     0,  0,  0,  5,  5,  0,  0,  0,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+    -5,  0,  0,  0,  0,  0,  0, -5,
+     5, 10, 10, 10, 10, 10, 10,  5,
+     0,  0,  0,  0,  0,  0,  0,  0,
+];
+
+#[rustfmt::skip]
+static QUEEN_TABLE: [i32; 64] = [
+    -20,-10,-10, -5, -5,-10,-10,-20,
+    -10,  0,  5,  0,  0,  0,  0,-10,
+    -10,  5,  5,  5,  5,  5,  0,-10,
+      0,  0,  5,  5,  5,  5,  0, -5,
+     -5,  0,  5,  5,  5,  5,  0, -5,
+    -10,  0,  5,  5,  5,  5,  0,-10,
+    -10,  0,  0,  0,  0,  0,  0,-10,
+    -20,-10,-10, -5, -5,-10,-10,-20,
+];
+
+#[rustfmt::skip]
+static KING_TABLE: [i32; 64] = [
+     20, 30, 10,  0,  0, 10, 30, 20,
+     20, 20,  0,  0,  0,  0, 20, 20,
+    -10,-20,-20,-20,-20,-20,-20,-10,
+    -20,-30,-30,-40,-40,-30,-30,-20,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Piece {
     Pawn,
@@ -75,6 +148,25 @@ impl Piece {
         }
     }
 
+    pub fn pst_bonus(self, color: Color, square: crate::engine::square::Square) -> i32 {
+        let idx = match color {
+            Color::White => square.to_index(),
+            Color::Black => {
+                let rank = square.to_index() / 8;
+                let file = square.to_index() % 8;
+                (7 - rank) * 8 + file
+            }
+        };
+        match self {
+            Piece::Pawn   => PAWN_TABLE[idx],
+            Piece::Knight => KNIGHT_TABLE[idx],
+            Piece::Bishop => BISHOP_TABLE[idx],
+            Piece::Rook   => ROOK_TABLE[idx],
+            Piece::Queen  => QUEEN_TABLE[idx],
+            Piece::King   => KING_TABLE[idx],
+        }
+    }
+
     // One-character symbol, uppercase for display purposes.
     pub fn symbol(self) -> char {
         match self {
@@ -104,6 +196,7 @@ impl ColoredPiece {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::square::Square;
 
     #[test]
     fn flip_color() {

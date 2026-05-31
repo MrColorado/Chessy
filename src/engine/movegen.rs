@@ -13,12 +13,12 @@ mod pawn;
 mod queen;
 mod rook;
 
-use bishop::{bishop_attack_from, gen_bishop_attacks, gen_bishop_moves};
-use king::{gen_king_attacks, gen_king_legal_moves};
-use knight::{gen_knight_attacks, gen_knight_moves, knights_attack_from};
-use pawn::{gen_pawn_attacks, gen_pawn_moves, pawn_attack_from};
-use queen::{gen_queen_attacks, gen_queen_moves};
-use rook::{gen_rook_attacks, gen_rook_moves, rook_attack_from};
+use bishop::{bishop_attack_from, gen_bishop_attacks, gen_bishop_captures, gen_bishop_moves};
+use king::{gen_king_attacks, gen_king_legal_captures, gen_king_legal_moves};
+use knight::{gen_knight_attacks, gen_knight_captures, gen_knight_moves, knights_attack_from};
+use pawn::{gen_pawn_attacks, gen_pawn_captures_and_promotions, gen_pawn_moves, pawn_attack_from};
+use queen::{gen_queen_attacks, gen_queen_captures, gen_queen_moves};
+use rook::{gen_rook_attacks, gen_rook_captures, gen_rook_moves, rook_attack_from};
 
 const RANK_8: BitBoard = 0xFF00000000000000;
 const RANK_7: BitBoard = 0x00FF000000000000;
@@ -92,7 +92,8 @@ pub(super) fn add_capture_moves(
     let enemy_king = board.get_bitboard_for_piece(Piece::King, opponent);
     let captures = targets & board.get_occupied_squares_for_color(opponent) & !enemy_king;
     for dest in extract_pieces_from_bitboard(captures) {
-        movelist.add_move(Move::capture(from, dest, piece));
+        let captured = board.get_piece_at(dest);
+        movelist.add_move(Move::capture(from, dest, piece, captured.unwrap().0));
     }
 }
 
@@ -108,37 +109,82 @@ pub fn gen_attacks_for_color(board: &Board, color: Color) -> BitBoard {
     attacks
 }
 
+struct LegalContext {
+    danger: BitBoard,
+    nb_checkers: u32,
+    check_mask: BitBoard,
+    pin_mask: [u64; 64],
+}
+
+impl LegalContext {
+    fn compute(board: &Board) -> Self {
+        let color = board.get_current_player_color();
+        let danger = compute_danger_squares(board, color);
+        let checkers = compute_checker(board, color);
+        let nb_checkers = checkers.count_ones();
+
+        let (check_mask, pin_mask) = if nb_checkers == 2 {
+            (0, [u64::MAX; 64])
+        } else {
+            let (_, pin_mask) = compute_pinned(board, color);
+            let check_mask = if nb_checkers == 1 {
+                compute_check_mask(board, color, checkers)
+            } else {
+                u64::MAX
+            };
+            (check_mask, pin_mask)
+        };
+
+        Self {
+            danger,
+            nb_checkers,
+            check_mask,
+            pin_mask,
+        }
+    }
+}
+
 pub fn gen_legal_moves(board: &Board) -> Movelist {
     let mut movelist = Movelist::new();
+    let ctx = LegalContext::compute(board);
 
-    let color = board.get_current_player_color();
-    let danger = compute_danger_squares(board, color);
-    let checkers = compute_checker(board, color);
-    let nb_checkers = checkers.count_ones();
+    gen_king_legal_moves(board, ctx.danger, ctx.nb_checkers > 0, &mut movelist);
 
-    gen_king_legal_moves(board, danger, nb_checkers > 0, &mut movelist);
-
-    if nb_checkers == 2 {
+    if ctx.nb_checkers == 2 {
         return movelist;
     }
 
-    let (_, pin_mask) = compute_pinned(board, color);
-    let check_mask = if nb_checkers == 1 {
-        compute_check_mask(board, color, checkers)
-    } else {
-        u64::MAX
-    };
+    gen_pawn_moves(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
+    gen_knight_moves(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
+    gen_bishop_moves(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
+    gen_rook_moves(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
+    gen_queen_moves(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
 
-    gen_pawn_moves(board, check_mask, &pin_mask, &mut movelist);
-    gen_knight_moves(board, check_mask, &pin_mask, &mut movelist);
-    gen_bishop_moves(board, check_mask, &pin_mask, &mut movelist);
-    gen_rook_moves(board, check_mask, &pin_mask, &mut movelist);
-    gen_queen_moves(board, check_mask, &pin_mask, &mut movelist);
-
+    movelist.sort();
     movelist
 }
 
-pub(super) fn compute_danger_squares(board: &Board, color: Color) -> BitBoard {
+pub fn gen_legal_captures(board: &Board) -> Movelist {
+    let mut movelist = Movelist::new();
+    let ctx = LegalContext::compute(board);
+
+    gen_king_legal_captures(board, ctx.danger, &mut movelist);
+
+    if ctx.nb_checkers == 2 {
+        return movelist;
+    }
+
+    gen_pawn_captures_and_promotions(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
+    gen_knight_captures(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
+    gen_bishop_captures(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
+    gen_rook_captures(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
+    gen_queen_captures(board, ctx.check_mask, &ctx.pin_mask, &mut movelist);
+
+    movelist.sort();
+    movelist
+}
+
+fn compute_danger_squares(board: &Board, color: Color) -> BitBoard {
     let occ_no_king =
         board.get_occupied_squares() & !board.get_bitboard_for_piece(Piece::King, color);
     let attacker_color = color.flip();
@@ -883,5 +929,183 @@ mod legal_moves_tests {
                 .any(|m| m.from() == Square::C5 && m.to() == Square::D6),
             "ep must be allowed when king is not on the same rank"
         );
+    }
+}
+
+#[cfg(test)]
+mod legal_capture_tests {
+    use super::*;
+    use crate::engine::mv::MoveKind;
+
+    fn captures_for(fen: &str) -> Movelist {
+        let board = Board::from_fen(fen).expect("valid FEN");
+        gen_legal_captures(&board)
+    }
+
+    fn has_move(list: &Movelist, from: Square, to: Square) -> bool {
+        list.as_slice()
+            .iter()
+            .any(|m| m.from() == from && m.to() == to)
+    }
+
+    fn count_from(list: &Movelist, from: Square) -> usize {
+        list.as_slice().iter().filter(|m| m.from() == from).count()
+    }
+
+    fn is_capture_or_promo(kind: MoveKind) -> bool {
+        matches!(
+            kind,
+            MoveKind::Capture
+                | MoveKind::EnPassant
+                | MoveKind::Promotion(_)
+                | MoveKind::PromotionCapture(_)
+        )
+    }
+
+    #[test]
+    fn starting_position_no_captures() {
+        assert_eq!(gen_legal_captures(&Board::new()).len(), 0);
+    }
+
+    #[test]
+    fn single_obvious_capture() {
+        // White knight d4, black pawn e6 — only one capture available
+        let list = captures_for("8/8/4p3/8/3N4/8/8/4K2k w - - 0 1");
+        assert_eq!(list.len(), 1);
+        assert!(has_move(&list, Square::D4, Square::E6));
+    }
+
+    #[test]
+    fn no_quiet_or_castle_or_double_push() {
+        // Starting position has zero captures — also check every move kind in a
+        // mid-game tactical position is capture or promotion.
+        let list = captures_for("r3k2r/ppp2ppp/2n2n2/3pp3/3PP3/2N2N2/PPP2PPP/R3K2R w KQkq - 0 1");
+        for mv in list.as_slice() {
+            assert!(
+                is_capture_or_promo(mv.kind()),
+                "non-capture move in capture list: {:?}",
+                mv.kind()
+            );
+        }
+    }
+
+    #[test]
+    fn promotion_push_yields_four_moves() {
+        // White pawn e7, black king a8 (out of the way). Push to e8 generates Q/R/B/N.
+        let list = captures_for("k7/4P3/8/8/8/8/8/4K3 w - - 0 1");
+        let promos = list
+            .as_slice()
+            .iter()
+            .filter(|m| m.from() == Square::E7 && m.to() == Square::E8)
+            .count();
+        assert_eq!(promos, 4, "all four promotion pieces expected");
+    }
+
+    #[test]
+    fn promotion_capture_yields_four_moves() {
+        // White pawn e7, black rook on d8. Capture-promotion to d8.
+        let list = captures_for("3r1k2/4P3/8/8/8/8/8/4K3 w - - 0 1");
+        let promo_caps = list
+            .as_slice()
+            .iter()
+            .filter(|m| m.from() == Square::E7 && m.to() == Square::D8)
+            .count();
+        assert_eq!(promo_caps, 4, "all four promotion-capture pieces expected");
+    }
+
+    #[test]
+    fn pinned_piece_cannot_capture_off_ray() {
+        // White knight e5 pinned by black rook e8 against king e1. Black pawn d7
+        // is attackable by the knight, but the knight is pinned on the e-file.
+        let list = captures_for("4r3/3p4/8/4N3/8/8/8/4K3 w - - 0 1");
+        assert_eq!(
+            count_from(&list, Square::E5),
+            0,
+            "pinned knight cannot capture off pin ray"
+        );
+    }
+
+    #[test]
+    fn double_check_only_king_captures() {
+        // Double check: knight f3 + rook h1 both check king e1. Bishop d2 cannot
+        // capture anything, only king captures are legal.
+        // White king e1, white bishop d2, black knight f3, black rook h1, black king h8.
+        let list = captures_for("7k/8/8/8/8/5n2/3B4/4K2r w - - 0 1");
+        assert_eq!(
+            count_from(&list, Square::D2),
+            0,
+            "bishop frozen in double check, even if it could capture"
+        );
+        // King can capture h1 rook? e1->h1 is too far. Just check no D2 move.
+    }
+
+    #[test]
+    fn single_check_other_piece_can_capture_checker() {
+        // Black knight d3 checks white king e1. White pawn e2 cannot capture
+        // (pawns capture diagonally), but white bishop c1 can capture d3? No,
+        // bishop c1 is blocked by d2. Use a cleaner setup:
+        // Black rook e8 checks white king e1. White rook a8 can capture e8.
+        let list = captures_for("R3r3/8/8/8/8/8/8/4K3 w - - 0 1");
+        assert!(
+            has_move(&list, Square::A8, Square::E8),
+            "rook can capture the checker via check_mask"
+        );
+    }
+
+    #[test]
+    fn en_passant_blocked_by_horizontal_exposure() {
+        // Same FEN as the legal_moves test — ep must be rejected.
+        let list = captures_for("8/8/8/KPp4r/8/8/8/8 w - c6 0 1");
+        assert!(
+            !list
+                .as_slice()
+                .iter()
+                .any(|m| m.from() == Square::B5 && m.to() == Square::C6),
+            "ep must be rejected due to horizontal king exposure"
+        );
+    }
+
+    #[test]
+    fn en_passant_included_when_legal() {
+        // King a8, white pawn c5, black pawn d5 (ep d6) — ep is a legal capture.
+        let list = captures_for("K7/8/8/2Pp3r/8/8/8/k7 w - d6 0 1");
+        assert!(
+            list.as_slice()
+                .iter()
+                .any(|m| m.from() == Square::C5 && m.to() == Square::D6),
+            "ep must be present in capture list when legal"
+        );
+    }
+
+    #[test]
+    fn matches_filtered_legal_moves() {
+        // Sanity check on a few FENs: capture list must equal the capture/promo
+        // subset of the full legal move list.
+        let fens = [
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+            "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+            "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        ];
+        for fen in fens {
+            let board = Board::from_fen(fen).expect("valid FEN");
+            let all = gen_legal_moves(&board);
+            let captures = gen_legal_captures(&board);
+            let mut expected: Vec<_> = all
+                .as_slice()
+                .iter()
+                .filter(|m| is_capture_or_promo(m.kind()))
+                .map(|m| (m.from(), m.to(), m.kind()))
+                .collect();
+            let mut got: Vec<_> = captures
+                .as_slice()
+                .iter()
+                .map(|m| (m.from(), m.to(), m.kind()))
+                .collect();
+            expected.sort_by_key(|t| (t.0.0, t.1.0, format!("{:?}", t.2)));
+            got.sort_by_key(|t| (t.0.0, t.1.0, format!("{:?}", t.2)));
+            assert_eq!(got, expected, "mismatch on FEN: {}", fen);
+        }
     }
 }

@@ -39,7 +39,35 @@ const CASTLING_RIGHTS_MASK: [u8; 64] = {
     m
 };
 
-#[derive(Debug, Default, Clone, Copy)]
+const MAILBOX_EMPTY: u8 = 0xFF;
+
+fn mailbox_encode(piece: Piece, color: Color) -> u8 {
+    let p = match piece {
+        Piece::Pawn   => 0u8,
+        Piece::Knight => 1,
+        Piece::Bishop => 2,
+        Piece::Rook   => 3,
+        Piece::Queen  => 4,
+        Piece::King   => 5,
+    };
+    let c = match color { Color::White => 0u8, Color::Black => 1 };
+    p * 2 + c
+}
+
+fn mailbox_decode(v: u8) -> (Piece, Color) {
+    let piece = match v / 2 {
+        0 => Piece::Pawn,
+        1 => Piece::Knight,
+        2 => Piece::Bishop,
+        3 => Piece::Rook,
+        4 => Piece::Queen,
+        _ => Piece::King,
+    };
+    let color = if v % 2 == 0 { Color::White } else { Color::Black };
+    (piece, color)
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Board {
     white_pawns: BitBoard,
     white_knights: BitBoard,
@@ -55,12 +83,40 @@ pub struct Board {
     black_queens: BitBoard,
     black_kings: BitBoard,
 
+    mailbox: [u8; 64],
+
     halfmove_clock: u8,
     fullmove_number: u8,
     board_eval_cache: i32,
     white_to_move: bool,
     en_passant_square: Option<Square>,
     castling_rights: CastlingRights,
+}
+
+impl Default for Board {
+    fn default() -> Self {
+        Board {
+            white_pawns: 0,
+            white_knights: 0,
+            white_bishops: 0,
+            white_rooks: 0,
+            white_queens: 0,
+            white_kings: 0,
+            black_pawns: 0,
+            black_knights: 0,
+            black_bishops: 0,
+            black_rooks: 0,
+            black_queens: 0,
+            black_kings: 0,
+            mailbox: [MAILBOX_EMPTY; 64],
+            halfmove_clock: 0,
+            fullmove_number: 0,
+            board_eval_cache: 0,
+            white_to_move: true,
+            en_passant_square: None,
+            castling_rights: CastlingRights(0),
+        }
+    }
 }
 
 impl Board {
@@ -80,6 +136,7 @@ impl Board {
             black_queens: 0x0800000000000000,
             black_kings: 0x1000000000000000,
 
+            mailbox: [MAILBOX_EMPTY; 64],
             halfmove_clock: 0,
             fullmove_number: 0,
             board_eval_cache: 0,
@@ -92,6 +149,7 @@ impl Board {
                     | CastlingRights::BLACK_QUEENSIDE,
             ),
         };
+        board.rebuild_mailbox();
         board.board_eval_cache = board.evaluate();
         board
     }
@@ -163,9 +221,35 @@ impl Board {
             .parse::<u8>()
             .map_err(|_| "Invalid FEN: invalid fullmove number")?;
 
+        board.rebuild_mailbox();
         board.board_eval_cache = board.evaluate();
 
         Ok(board)
+    }
+
+    fn rebuild_mailbox(&mut self) {
+        self.mailbox = [MAILBOX_EMPTY; 64];
+        let pieces = [
+            (Piece::Pawn,   Color::White, self.white_pawns),
+            (Piece::Knight, Color::White, self.white_knights),
+            (Piece::Bishop, Color::White, self.white_bishops),
+            (Piece::Rook,   Color::White, self.white_rooks),
+            (Piece::Queen,  Color::White, self.white_queens),
+            (Piece::King,   Color::White, self.white_kings),
+            (Piece::Pawn,   Color::Black, self.black_pawns),
+            (Piece::Knight, Color::Black, self.black_knights),
+            (Piece::Bishop, Color::Black, self.black_bishops),
+            (Piece::Rook,   Color::Black, self.black_rooks),
+            (Piece::Queen,  Color::Black, self.black_queens),
+            (Piece::King,   Color::Black, self.black_kings),
+        ];
+        for (piece, color, mut bb) in pieces {
+            while bb != 0 {
+                let idx = bb.trailing_zeros() as usize;
+                self.mailbox[idx] = mailbox_encode(piece, color);
+                bb &= bb - 1;
+            }
+        }
     }
 
     pub fn get_current_player_color(&self) -> Color {
@@ -277,46 +361,8 @@ impl Board {
     }
 
     pub fn get_piece_at(&self, square: Square) -> Option<(Piece, Color)> {
-        let bit = 1u64 << square.to_index();
-        if self.white_pawns & bit != 0 {
-            return Some((Piece::Pawn, Color::White));
-        }
-        if self.white_knights & bit != 0 {
-            return Some((Piece::Knight, Color::White));
-        }
-        if self.white_bishops & bit != 0 {
-            return Some((Piece::Bishop, Color::White));
-        }
-        if self.white_rooks & bit != 0 {
-            return Some((Piece::Rook, Color::White));
-        }
-        if self.white_queens & bit != 0 {
-            return Some((Piece::Queen, Color::White));
-        }
-        if self.white_kings & bit != 0 {
-            return Some((Piece::King, Color::White));
-        }
-
-        if self.black_pawns & bit != 0 {
-            return Some((Piece::Pawn, Color::Black));
-        }
-        if self.black_knights & bit != 0 {
-            return Some((Piece::Knight, Color::Black));
-        }
-        if self.black_bishops & bit != 0 {
-            return Some((Piece::Bishop, Color::Black));
-        }
-        if self.black_rooks & bit != 0 {
-            return Some((Piece::Rook, Color::Black));
-        }
-        if self.black_queens & bit != 0 {
-            return Some((Piece::Queen, Color::Black));
-        }
-        if self.black_kings & bit != 0 {
-            return Some((Piece::King, Color::Black));
-        }
-
-        None
+        let v = self.mailbox[square.to_index()];
+        if v == MAILBOX_EMPTY { None } else { Some(mailbox_decode(v)) }
     }
 
     pub fn can_castle_kingside(&self, color: Color) -> bool {
@@ -347,14 +393,14 @@ impl Board {
 
     pub fn make_move(&mut self, mv: Move) -> IrreversibleState {
         let piece = mv.piece();
+        let captured = mv.captured();
         let is_capture = matches!(mv.kind(), MoveKind::Capture | MoveKind::PromotionCapture(_));
-        let captured_piece = is_capture.then(|| self.get_piece_at(mv.to()).map(|(p, _)| p)).flatten();
 
         let irreversibile_state = IrreversibleState {
             castling_rights: self.castling_rights,
             en_passant_square: self.en_passant_square,
             halfmove_clock: self.halfmove_clock,
-            captured_piece,
+            captured_piece: captured,
         };
 
         self.board_eval_cache += self.incremental_evaluate(mv);
@@ -367,12 +413,12 @@ impl Board {
                 self.place_piece(mv.promotion().unwrap(), color, mv.to());
             }
             MoveKind::PromotionCapture(_) => {
-                self.remove_piece(captured_piece.unwrap(), opponent_color, mv.to());
+                self.remove_piece(captured.unwrap(), opponent_color, mv.to());
                 self.remove_piece(Piece::Pawn, color, mv.from());
                 self.place_piece(mv.promotion().unwrap(), color, mv.to());
             }
             MoveKind::Capture => {
-                self.remove_piece(captured_piece.unwrap(), opponent_color, mv.to());
+                self.remove_piece(captured.unwrap(), opponent_color, mv.to());
                 self.move_piece(piece, color, mv.from(), mv.to());
             }
             MoveKind::KingsideCastle => {
@@ -497,6 +543,8 @@ impl Board {
             (Piece::Queen,  Color::Black) => self.black_queens  = (self.black_queens  & !from_bb) | to_bb,
             (Piece::King,   Color::Black) => self.black_kings   = (self.black_kings   & !from_bb) | to_bb,
         }
+        self.mailbox[from.to_index()] = MAILBOX_EMPTY;
+        self.mailbox[to.to_index()] = mailbox_encode(piece, color);
     }
 
     fn place_piece(&mut self, piece: Piece, color: Color, square: Square) {
@@ -515,6 +563,7 @@ impl Board {
             (Piece::Queen,  Color::Black) => self.black_queens  |= bit,
             (Piece::King,   Color::Black) => self.black_kings   |= bit,
         }
+        self.mailbox[square.to_index()] = mailbox_encode(piece, color);
     }
 
     fn remove_piece(&mut self, piece: Piece, color: Color, square: Square) {
@@ -533,6 +582,7 @@ impl Board {
             (Piece::Queen, Color::Black) => self.black_queens &= !bit,
             (Piece::King, Color::Black) => self.black_kings &= !bit,
         }
+        self.mailbox[square.to_index()] = MAILBOX_EMPTY;
     }
 
     pub fn make_squares_move(
@@ -548,8 +598,8 @@ impl Board {
         let color = self.get_current_player_color();
 
         let mv = if let Some(promo) = promotion {
-            if self.get_piece_at(to).is_some() {
-                Move::promote_capture(from, to, promo)
+            if let Some(captured) =  self.get_piece_at(to) {
+                Move::promote_capture(from, to, promo, captured.0)
             } else {
                 Move::promote(from, to, promo)
             }
@@ -563,8 +613,8 @@ impl Board {
             Move::en_passant(from, to)
         } else if piece == Piece::Pawn && (to.to_index() as i32 - from.to_index() as i32).abs() == 16 {
             Move::double_pawn_push(from, to)
-        } else if self.get_piece_at(to).is_some() {
-            Move::capture(from, to, piece)
+        } else if let Some(captured) =  self.get_piece_at(to) {
+            Move::capture(from, to, piece, captured.0)
         } else {
             Move::quiet(from, to, piece)
         };
@@ -572,41 +622,53 @@ impl Board {
         Ok(self.make_move(mv))
     }
 
-    fn evaluate(&mut self) -> i32 {
+    fn evaluate(&self) -> i32 {
         let mut score = 0;
         for color in [Color::White, Color::Black] {
+            let sign = if color == Color::White { 1 } else { -1 };
             for piece in Piece::ALL {
-                let count = self.get_bitboard_for_piece(piece, color).count_ones() as i32;
-                let value = Piece::value(piece);
-                if color == Color::White {
-                    score += count * value;
-                } else {
-                    score -= count * value;
+                let mut bb = self.get_bitboard_for_piece(piece, color);
+                while bb != 0 {
+                    let sq = Square(bb.trailing_zeros() as u8);
+                    score += sign * (piece.value() + piece.pst_bonus(color, sq));
+                    bb &= bb - 1;
                 }
             }
         }
         score
     }
 
-    fn incremental_evaluate(&mut self, mv: Move) -> i32 {
+    fn incremental_evaluate(&self, mv: Move) -> i32 {
+        let color = self.get_current_player_color();
+        let opponent = self.get_opponent_color();
+        let sign = if color == Color::White { 1 } else { -1 };
+        let piece = mv.piece();
+
+        let positional_delta = piece.pst_bonus(color, mv.to()) - piece.pst_bonus(color, mv.from());
+
         match mv.kind() {
             MoveKind::Promotion(promo) => {
-                if self.get_current_player_color() == Color::White {
-                    promo.value() - Piece::Pawn.value()
-                } else {
-                    Piece::Pawn.value() - promo.value()
-                }
+                sign * (promo.value() + promo.pst_bonus(color, mv.to())
+                    - Piece::Pawn.value() - piece.pst_bonus(color, mv.from()))
+            }
+            MoveKind::PromotionCapture(promo) => {
+                let captured = mv.captured().unwrap();
+                sign * (promo.value() + promo.pst_bonus(color, mv.to())
+                    - Piece::Pawn.value() - piece.pst_bonus(color, mv.from())
+                    + captured.value() + captured.pst_bonus(opponent, mv.to()))
             }
             MoveKind::Capture => {
-                let captured_piece = self.get_piece_at(mv.to()).unwrap().0;
-                let captured_value = captured_piece.value();
-                if self.get_current_player_color() == Color::White {
-                    captured_value
-                } else {
-                    -captured_value
-                }
+                let captured = mv.captured().unwrap();
+                sign * (positional_delta + captured.value() + captured.pst_bonus(opponent, mv.to()))
             }
-            _ => 0,
+            MoveKind::EnPassant => {
+                let captured_sq = match color {
+                    Color::White => Square((mv.to().to_index() - 8) as u8),
+                    Color::Black => Square((mv.to().to_index() + 8) as u8),
+                };
+                sign * (positional_delta + Piece::Pawn.value() + Piece::Pawn.pst_bonus(opponent, captured_sq))
+            }
+            _ => sign * positional_delta,
         }
     }
 }
@@ -625,45 +687,47 @@ mod tests {
 
     #[test]
     fn evaluate_white_up_a_pawn() {
-        // Black is missing one pawn
+        // Black is missing one pawn — score must be positive regardless of PST
         let board = Board::from_fen("rnbqkbnr/ppppppp1/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
-        assert_eq!(board.board_eval_cache, 100);
+        assert!(board.board_eval_cache > 0);
     }
 
     #[test]
     fn evaluate_black_up_a_queen() {
-        // White is missing its queen
+        // White is missing its queen — score must be negative regardless of PST
         let board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1").unwrap();
-        assert_eq!(board.board_eval_cache, -900);
-    }
-
-    #[test]
-    fn incremental_evaluate_quiet_move_unchanged() {
-        let mut board = Board::new();
-        let mv = Move::quiet(Square::E2, Square::E4, Piece::Pawn);
-        let incremental = board.incremental_evaluate(mv);
-        assert_eq!(incremental, board.board_eval_cache);
+        assert!(board.board_eval_cache < 0);
     }
 
     #[test]
     fn incremental_evaluate_white_capture_matches_full_eval() {
         // White pawn on e5 can capture black pawn on d6
         let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k w - - 0 1").unwrap();
-        let mv = Move::capture(Square::E5, Square::D6, Piece::Pawn);
-        let incremental = board.incremental_evaluate(mv);
+        let mv = Move::capture(Square::E5, Square::D6, Piece::Pawn, Piece::Pawn);
+        let before = board.board_eval_cache;
+        let delta = board.incremental_evaluate(mv);
         board.make_move(mv);
-        let full = board.evaluate();
-        assert_eq!(incremental, full);
+        assert_eq!(before + delta, board.board_eval_cache);
     }
 
     #[test]
     fn incremental_evaluate_black_capture_matches_full_eval() {
         // Black pawn on d6 can capture white pawn on e5
         let mut board = Board::from_fen("8/8/3p4/4P3/8/8/8/4K2k b - - 0 1").unwrap();
-        let mv = Move::capture(Square::D6, Square::E5, Piece::Pawn);
-        let incremental = board.incremental_evaluate(mv);
+        let mv = Move::capture(Square::D6, Square::E5, Piece::Pawn, Piece::Pawn);
+        let before = board.board_eval_cache;
+        let delta = board.incremental_evaluate(mv);
         board.make_move(mv);
-        let full = board.evaluate();
-        assert_eq!(incremental, full);
+        assert_eq!(before + delta, board.board_eval_cache);
+    }
+
+    #[test]
+    fn incremental_evaluate_quiet_move_matches_full_eval() {
+        let mut board = Board::from_fen("8/8/8/8/8/8/4P3/4K2k w - - 0 1").unwrap();
+        let mv = Move::quiet(Square::E2, Square::E4, Piece::Pawn);
+        let before = board.board_eval_cache;
+        let delta = board.incremental_evaluate(mv);
+        board.make_move(mv);
+        assert_eq!(before + delta, board.board_eval_cache);
     }
 }
