@@ -18,6 +18,16 @@ pub(super) fn gen_knight_moves(board: &Board, check_mask: BitBoard, pin_mask: &[
     }
 }
 
+pub(super) fn gen_knight_captures(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
+    let color = board.get_current_player_color();
+    let knights = board.get_bitboard_for_piece(Piece::Knight, color);
+    for pos in extract_pieces_from_bitboard(knights) {
+        let effective = check_mask & pin_mask[pos.to_index()];
+        let targets = knight_targets(pos.to_bitboard()) & effective;
+        add_capture_moves(pos, targets, Piece::Knight, board, movelist);
+    }
+}
+
 pub(super) fn gen_knight_attacks(board: &Board, color: Color) -> BitBoard {
     let knights = board.get_bitboard_for_piece(Piece::Knight, color);
     let mut attacks = 0u64;

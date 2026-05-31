@@ -28,6 +28,19 @@ pub(super) fn gen_bishop_moves(board: &Board, check_mask: BitBoard, pin_mask: &[
     }
 }
 
+pub(super) fn gen_bishop_captures(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
+    let table = get_bishop_table();
+    let color = board.get_current_player_color();
+    let bishops = board.get_bitboard_for_piece(Piece::Bishop, color);
+    let occupancy = board.get_occupied_squares();
+
+    for sq in extract_pieces_from_bitboard(bishops) {
+        let effective = check_mask & pin_mask[sq.to_index()];
+        let targets = table.attacks(sq, occupancy) & effective;
+        add_capture_moves(sq, targets, Piece::Bishop, board, movelist);
+    }
+}
+
 pub(super) fn gen_bishop_attacks(board: &Board, color: Color, occupancy: BitBoard) -> BitBoard {
     let table = get_bishop_table();
     let bishops = board.get_bitboard_for_piece(Piece::Bishop, color);

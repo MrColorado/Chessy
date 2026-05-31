@@ -5,11 +5,15 @@ use std::sync::{
 };
 
 use super::board::Board;
-use super::movegen::gen_legal_moves;
+use super::movegen::{gen_legal_moves, gen_legal_captures};
 use super::mv::Move;
 use super::rule;
 
 const MAX_PLY: usize = 128;
+
+// Marge de sécurité pour le delta pruning : couvre les promotions et les
+// petites tactiques courtes qui peuvent regagner du matériel après la capture.
+const DELTA_MARGIN: i32 = 200;
 
 pub fn search(mut board: Board, stop_flag: Arc<AtomicBool>, tx: Sender<Option<Move>>) {
     let mut searcher = Searcher::new(stop_flag.clone());
@@ -83,8 +87,12 @@ impl Searcher {
             return 0;
         }
 
-        if depth == 0 || ply >= MAX_PLY {
+        if ply >= MAX_PLY {
             return board.get_board_evaluation();
+        }
+
+        if depth == 0 {
+            return self.quiescence(board, alpha, beta);
         }
 
         let color = board.get_current_player_color();
@@ -117,6 +125,49 @@ impl Searcher {
                     self.killers[ply][0] = Some(mv);
                 }
                 return best_score;
+            }
+        }
+
+        best_score
+    }
+
+    fn quiescence(&mut self, board: &mut Board, mut alpha: i32, beta: i32) -> i32 {
+        if self.stop_flag.load(Ordering::Relaxed) {
+            return 0;
+        }
+
+        let mut best_score = board.get_board_evaluation();
+        if best_score >= beta {
+            return best_score;
+        }
+        if alpha < best_score {
+            alpha = best_score;
+        }
+
+        for mv in gen_legal_captures(&board) {
+            // Delta pruning : si même en gagnant la pièce capturée (+ marge) on
+            // ne remonte pas jusqu'à alpha, la branche est sans espoir. On garde
+            // les promotions qui changent la valeur de la pièce promue.
+            if mv.promotion().is_none() {
+                if let Some(captured) = mv.captured() {
+                    if best_score + captured.value() + DELTA_MARGIN < alpha {
+                        continue;
+                    }
+                }
+            }
+
+            let state = board.make_move(mv);
+            let score = -self.quiescence(board, -beta, -alpha);
+            board.unmake_move(mv, state);
+
+            if score >= beta {
+                return score;
+            }
+            if score > best_score {
+                best_score = score;
+            }
+            if score > alpha {
+                alpha = score;
             }
         }
 

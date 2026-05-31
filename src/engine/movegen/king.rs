@@ -19,6 +19,16 @@ pub(super) fn gen_king_legal_moves(board: &Board, danger: BitBoard, in_check: bo
     }
 }
 
+pub(super) fn gen_king_legal_captures(board: &Board, danger: BitBoard, movelist: &mut Movelist) {
+    let color = board.get_current_player_color();
+    let king = board.get_bitboard_for_piece(Piece::King, color);
+    let own = board.get_occupied_squares_for_color(color);
+    for pos in extract_pieces_from_bitboard(king) {
+        let targets = king_targets(pos.to_bitboard()) & !danger & !own;
+        add_capture_moves(pos, targets, Piece::King, board, movelist);
+    }
+}
+
 pub(super) fn gen_king_attacks(board: &Board, color: Color) -> BitBoard {
     let king = board.get_bitboard_for_piece(Piece::King, color);
     let mut attacks = 0u64;

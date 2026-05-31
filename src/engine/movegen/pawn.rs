@@ -17,6 +17,16 @@ pub(super) fn gen_pawn_moves(board: &Board, check_mask: BitBoard, pin_mask: &[u6
     }
 }
 
+pub(super) fn gen_pawn_captures_and_promotions(board: &Board, check_mask: BitBoard, pin_mask: &[u64; 64], movelist: &mut Movelist) {
+    let color = board.get_current_player_color();
+    let pawns = board.get_bitboard_for_piece(Piece::Pawn, color);
+    for pos in extract_pieces_from_bitboard(pawns) {
+        let effective = check_mask & pin_mask[pos.to_index()];
+        pawn_promotion_pushes(pos, effective, board, movelist);
+        pawn_attacks(pos, effective, check_mask, pin_mask, board, movelist);
+    }
+}
+
 pub(super) fn gen_pawn_attacks(board: &Board, color: Color) -> BitBoard {
     let pawns = board.get_bitboard_for_piece(Piece::Pawn, color);
 
@@ -87,6 +97,29 @@ fn pawn_moves(pos: Square, effective: BitBoard, board: &Board, movelist: &mut Mo
                     movelist.add_move(Move::double_pawn_push(pos, Square(double_dest.trailing_zeros() as u8)));
                 }
             }
+        }
+    }
+}
+
+fn pawn_promotion_pushes(pos: Square, effective: BitBoard, board: &Board, movelist: &mut Movelist) {
+    let pos_bb = pos.to_bitboard();
+    let occupied = board.get_occupied_squares();
+
+    if board.get_white_to_move() {
+        if pos_bb & RANK_7 == 0 {
+            return;
+        }
+        let step = pos_bb << 8;
+        if step & occupied == 0 && step & effective != 0 {
+            add_pawn_targets(board, pos, step, RANK_8, false, movelist);
+        }
+    } else {
+        if pos_bb & RANK_2 == 0 {
+            return;
+        }
+        let step = pos_bb >> 8;
+        if step & occupied == 0 && step & effective != 0 {
+            add_pawn_targets(board, pos, step, RANK_1, false, movelist);
         }
     }
 }
