@@ -8,12 +8,39 @@ use super::board::Board;
 use super::movegen::{gen_legal_moves, gen_legal_captures};
 use super::mv::Move;
 use super::rule;
+use super::tt::{Bound, TranspositionTable};
 
 const MAX_PLY: usize = 128;
-
-// Marge de sécurité pour le delta pruning : couvre les promotions et les
-// petites tactiques courtes qui peuvent regagner du matériel après la capture.
 const DELTA_MARGIN: i32 = 200;
+const MATE: i32 = 30_000;
+const MATE_THRESHOLD: i32 = MATE - MAX_PLY as i32;
+const TT_SIZE_MB: usize = 16;
+
+// Convert a node-relative mate score into a root-relative one for TT storage
+// (and back on retrieval). Non-mate scores pass through unchanged. See the
+// derivation: a stored score encodes distance-from-this-node, the live score
+// encodes distance-from-root; they differ by `ply`.
+#[inline]
+fn score_to_tt(score: i32, ply: usize) -> i32 {
+    if score >= MATE_THRESHOLD {
+        score + ply as i32
+    } else if score <= -MATE_THRESHOLD {
+        score - ply as i32
+    } else {
+        score
+    }
+}
+
+#[inline]
+fn score_from_tt(score: i32, ply: usize) -> i32 {
+    if score >= MATE_THRESHOLD {
+        score - ply as i32
+    } else if score <= -MATE_THRESHOLD {
+        score + ply as i32
+    } else {
+        score
+    }
+}
 
 pub fn search(mut board: Board, stop_flag: Arc<AtomicBool>, tx: Sender<Option<Move>>) {
     let mut searcher = Searcher::new(stop_flag.clone());
@@ -61,6 +88,7 @@ pub fn negamax_bench(board: &mut Board, depth: i32) -> i32 {
 struct Searcher {
     stop_flag: Arc<AtomicBool>,
     killers: [[Option<Move>; 2]; MAX_PLY],
+    tt: TranspositionTable,
 }
 
 impl Searcher {
@@ -68,6 +96,7 @@ impl Searcher {
         Searcher {
             stop_flag,
             killers: [[None; 2]; MAX_PLY],
+            tt: TranspositionTable::with_capacity_mb(TT_SIZE_MB),
         }
     }
 
@@ -95,19 +124,42 @@ impl Searcher {
             return self.quiescence(board, alpha, beta);
         }
 
+        let hash = board.hash();
+        let alpha_orig = alpha;
+
+        // Probe the transposition table. A deep-enough entry can cut off
+        // directly; otherwise we still reuse its best move for ordering.
+        let mut tt_move = None;
+        if let Some(entry) = self.tt.probe(hash) {
+            tt_move = entry.best_move;
+            if entry.depth >= depth {
+                let score = score_from_tt(entry.score, ply);
+                match entry.bound {
+                    Bound::Exact => return score,
+                    Bound::Lower if score >= beta => return score,
+                    Bound::Upper if score <= alpha => return score,
+                    _ => {}
+                }
+            }
+        }
+
         let color = board.get_current_player_color();
         let mut legal_moves = gen_legal_moves(&board);
         if legal_moves.len() == 0 {
             return if rule::is_in_check(&board, color) {
-                i32::MIN + 1
+                -(MATE - ply as i32)
             } else {
                 0
             };
         }
         legal_moves.rescore_with_killers(&self.killers[ply]);
+        if let Some(mv) = tt_move {
+            legal_moves.rescore_tt_move(mv);
+        }
         legal_moves.sort();
 
         let mut best_score = i32::MIN + 1;
+        let mut best_move = None;
         for mv in legal_moves {
             let state = board.make_move(mv);
             let score = -self.negamax(board, depth - 1, ply + 1, -beta, -alpha);
@@ -115,6 +167,7 @@ impl Searcher {
 
             if score > best_score {
                 best_score = score;
+                best_move = Some(mv);
                 if best_score > alpha {
                     alpha = best_score;
                 }
@@ -124,9 +177,24 @@ impl Searcher {
                     self.killers[ply][1] = self.killers[ply][0];
                     self.killers[ply][0] = Some(mv);
                 }
+                self.tt.store(
+                    hash,
+                    depth,
+                    score_to_tt(best_score, ply),
+                    Bound::Lower,
+                    best_move,
+                );
                 return best_score;
             }
         }
+
+        let bound = if best_score > alpha_orig {
+            Bound::Exact
+        } else {
+            Bound::Upper
+        };
+        self.tt
+            .store(hash, depth, score_to_tt(best_score, ply), bound, best_move);
 
         best_score
     }
@@ -145,9 +213,6 @@ impl Searcher {
         }
 
         for mv in gen_legal_captures(&board) {
-            // Delta pruning : si même en gagnant la pièce capturée (+ marge) on
-            // ne remonte pas jusqu'à alpha, la branche est sans espoir. On garde
-            // les promotions qui changent la valeur de la pièce promue.
             if mv.promotion().is_none() {
                 if let Some(captured) = mv.captured() {
                     if best_score + captured.value() + DELTA_MARGIN < alpha {
@@ -202,8 +267,9 @@ mod tests {
 
     #[test]
     fn mate_in_one_is_max_score() {
-        // Blanc joue Tb8# : pion a7 couvre b8, Ka6 couvre a7 et b7 → mat
-        assert_eq!(eval("k7/P7/KR6/8/8/8/8/8 w - - 0 1", 2), i32::MAX);
+        // Blanc joue Tb8# : pion a7 couvre b8, Ka6 couvre a7 et b7 → mat.
+        // Le mat est livré à 1 demi-coup de la racine → score MATE - 1.
+        assert_eq!(eval("k7/P7/KR6/8/8/8/8/8 w - - 0 1", 2), MATE - 1);
     }
 
     #[test]
@@ -223,9 +289,10 @@ mod tests {
     #[test]
     fn mate_in_two() {
         // Blanc joue Rb8+ Ka7, puis Rb7# — mat en 2 coups
-        // Roi noir a8, tour b1, roi blanc c6
+        // Roi noir a8, tour b1, roi blanc c6.
+        // Le mat est livré à 3 demi-coups de la racine → score MATE - 3.
         let score = eval("k7/8/2K5/8/8/8/8/1R6 w - - 0 1", 4);
-        assert_eq!(score, i32::MAX);
+        assert_eq!(score, MATE - 3);
     }
 
     #[test]

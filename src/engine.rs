@@ -5,6 +5,8 @@ pub mod piece;
 pub mod rule;
 pub mod searcher;
 pub mod square;
+pub mod tt;
+pub mod zobrist;
 
 use core::time::Duration;
 use std::sync::{

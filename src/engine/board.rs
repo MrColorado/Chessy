@@ -1,6 +1,7 @@
 use crate::engine::mv::{IrreversibleState, Move, MoveKind};
 use crate::engine::piece::{Color, Piece};
 use crate::engine::square::Square;
+use crate::engine::zobrist::ZOBRIST;
 
 pub type BitBoard = u64;
 
@@ -91,6 +92,8 @@ pub struct Board {
     white_to_move: bool,
     en_passant_square: Option<Square>,
     castling_rights: CastlingRights,
+
+    hash: u64,
 }
 
 impl Default for Board {
@@ -115,6 +118,7 @@ impl Default for Board {
             white_to_move: true,
             en_passant_square: None,
             castling_rights: CastlingRights(0),
+            hash: 0,
         }
     }
 }
@@ -148,9 +152,11 @@ impl Board {
                     | CastlingRights::BLACK_KINGSIDE
                     | CastlingRights::BLACK_QUEENSIDE,
             ),
+            hash: 0,
         };
         board.rebuild_mailbox();
         board.board_eval_cache = board.evaluate();
+        board.hash = board.compute_hash();
         board
     }
 
@@ -223,6 +229,7 @@ impl Board {
 
         board.rebuild_mailbox();
         board.board_eval_cache = board.evaluate();
+        board.hash = board.compute_hash();
 
         Ok(board)
     }
@@ -250,6 +257,47 @@ impl Board {
                 bb &= bb - 1;
             }
         }
+    }
+
+    pub fn compute_hash(&self) -> u64 {
+        let mut hash = 0u64;
+        for sq in 0..64 {
+            let v = self.mailbox[sq];
+            if v != MAILBOX_EMPTY {
+                let (piece, color) = mailbox_decode(v);
+                hash ^= ZOBRIST.piece_keys[piece.index()][color.index()][sq];
+            }
+        }
+        hash ^= Self::castling_hash(self.castling_rights);
+        if let Some(ep) = self.en_passant_square {
+            hash ^= ZOBRIST.en_passant_keys[ep.file() as usize];
+        }
+        if !self.white_to_move {
+            hash ^= ZOBRIST.side_to_move_key;
+        }
+        hash
+    }
+
+    fn castling_hash(rights: CastlingRights) -> u64 {
+        let mut h = 0u64;
+        if rights.0 & CastlingRights::WHITE_KINGSIDE != 0 {
+            h ^= ZOBRIST.castling_keys[0];
+        }
+        if rights.0 & CastlingRights::WHITE_QUEENSIDE != 0 {
+            h ^= ZOBRIST.castling_keys[1];
+        }
+        if rights.0 & CastlingRights::BLACK_KINGSIDE != 0 {
+            h ^= ZOBRIST.castling_keys[2];
+        }
+        if rights.0 & CastlingRights::BLACK_QUEENSIDE != 0 {
+            h ^= ZOBRIST.castling_keys[3];
+        }
+        h
+    }
+
+    #[inline]
+    pub fn hash(&self) -> u64 {
+        self.hash
     }
 
     pub fn get_current_player_color(&self) -> Color {
@@ -401,7 +449,16 @@ impl Board {
             en_passant_square: self.en_passant_square,
             halfmove_clock: self.halfmove_clock,
             captured_piece: captured,
+            prev_hash: self.hash,
         };
+
+        // Remove the old en-passant key now; the new one (if any) is XOR-ed in
+        // once we know the destination. The piece XORs are handled by the
+        // move_piece / place_piece / remove_piece helpers below.
+        if let Some(ep) = self.en_passant_square {
+            self.hash ^= ZOBRIST.en_passant_keys[ep.file() as usize];
+        }
+        self.hash ^= Self::castling_hash(self.castling_rights);
 
         self.board_eval_cache += self.incremental_evaluate(mv);
 
@@ -452,6 +509,7 @@ impl Board {
 
         self.castling_rights.0 &= CASTLING_RIGHTS_MASK[mv.from().to_index() as usize]
             & CASTLING_RIGHTS_MASK[mv.to().to_index() as usize];
+        self.hash ^= Self::castling_hash(self.castling_rights);
 
         self.halfmove_clock = if piece == Piece::Pawn || is_capture {
             0
@@ -465,8 +523,18 @@ impl Board {
         } else {
             None
         };
+        if let Some(ep) = self.en_passant_square {
+            self.hash ^= ZOBRIST.en_passant_keys[ep.file() as usize];
+        }
         self.fullmove_number += if self.white_to_move { 0 } else { 1 };
         self.white_to_move = !self.white_to_move;
+        self.hash ^= ZOBRIST.side_to_move_key;
+
+        debug_assert_eq!(
+            self.hash,
+            self.compute_hash(),
+            "incremental hash diverged from scratch hash after make_move {mv}"
+        );
         irreversibile_state
     }
 
@@ -523,6 +591,13 @@ impl Board {
             }
         }
         self.board_eval_cache -= self.incremental_evaluate(mv);
+        self.hash = state.prev_hash;
+
+        debug_assert_eq!(
+            self.hash,
+            self.compute_hash(),
+            "incremental hash diverged from scratch hash after unmake_move {mv}"
+        );
     }
 
     fn move_piece(&mut self, piece: Piece, color: Color, from: Square, to: Square) {
@@ -545,6 +620,9 @@ impl Board {
         }
         self.mailbox[from.to_index()] = MAILBOX_EMPTY;
         self.mailbox[to.to_index()] = mailbox_encode(piece, color);
+
+        let key = &ZOBRIST.piece_keys[piece.index()][color.index()];
+        self.hash ^= key[from.to_index()] ^ key[to.to_index()];
     }
 
     fn place_piece(&mut self, piece: Piece, color: Color, square: Square) {
@@ -564,6 +642,8 @@ impl Board {
             (Piece::King,   Color::Black) => self.black_kings   |= bit,
         }
         self.mailbox[square.to_index()] = mailbox_encode(piece, color);
+
+        self.hash ^= ZOBRIST.piece_keys[piece.index()][color.index()][square.to_index()];
     }
 
     fn remove_piece(&mut self, piece: Piece, color: Color, square: Square) {
@@ -583,6 +663,8 @@ impl Board {
             (Piece::King, Color::Black) => self.black_kings &= !bit,
         }
         self.mailbox[square.to_index()] = MAILBOX_EMPTY;
+
+        self.hash ^= ZOBRIST.piece_keys[piece.index()][color.index()][square.to_index()];
     }
 
     pub fn make_squares_move(
@@ -683,6 +765,32 @@ mod tests {
     fn evaluate_starting_position_is_zero() {
         let board = Board::new();
         assert_eq!(board.board_eval_cache, 0);
+    }
+
+    #[test]
+    fn incremental_hash_matches_scratch_on_make_unmake() {
+        use crate::engine::movegen::gen_legal_moves;
+
+        // A few positions exercising castling, en-passant and promotions.
+        let fens = [
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", // kiwipete
+            "8/2P5/8/8/8/8/3p4/4K2k w - - 0 1", // promotions
+            "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 1", // en passant available
+        ];
+
+        for fen in fens {
+            let mut board = Board::from_fen(fen).unwrap();
+            assert_eq!(board.hash, board.compute_hash(), "scratch hash for {fen}");
+            let original = board.hash;
+
+            for mv in gen_legal_moves(&board) {
+                let state = board.make_move(mv);
+                // make_move's debug_assert already checks incremental == scratch.
+                board.unmake_move(mv, state);
+                assert_eq!(board.hash, original, "hash not restored after {mv} in {fen}");
+            }
+        }
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub struct IrreversibleState {
     pub en_passant_square: Option<Square>,
     pub halfmove_clock: u8,
     pub captured_piece: Option<Piece>,
+    pub prev_hash: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -181,6 +182,7 @@ impl Move {
 
 const KILLER_PRIMARY_SCORE: i32 = -1_000;
 const KILLER_SECONDARY_SCORE: i32 = -1_001;
+const TT_MOVE_SCORE: i32 = 1_000_000;
 
 impl fmt::Display for Move {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -220,6 +222,15 @@ impl Movelist {
 
     pub fn as_slice(&self) -> &[Move] {
         &self.moves[..self.count]
+    }
+
+    pub fn rescore_tt_move(&mut self, tt_move: Move) {
+        for i in 0..self.count {
+            if self.moves[i] == tt_move {
+                self.scores[i] = TT_MOVE_SCORE;
+                return;
+            }
+        }
     }
 
     pub fn rescore_with_killers(&mut self, killers: &[Option<Move>; 2]) {
