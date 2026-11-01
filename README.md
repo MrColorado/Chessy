@@ -56,6 +56,19 @@ What the engine currently implements.
 - `scripts/bench.sh` runs a gauntlet against Stockfish (bridged to several Elo levels) via
   [fastchess](https://github.com/Disservin/fastchess) to estimate playing strength.
 
+## Strength
+
+Measured with `scripts/bench.sh`: a gauntlet against Stockfish limited via `UCI_Elo`
+(1320 / 1500 / 1800 / 2100), 10+0.1 time control, `8moves_v3` opening book.
+
+| Version                        | Games | Score | Estimated Elo |
+| ------------------------------ | ----- | ----- | ------------- |
+| v1.2.0 (qsearch, killers, PST) | 200   | 50.5% | ~1690 ± 30    |
+| + transposition table          | 80    | 76.9% | ~1890 ± 90    |
+
+Numbers are on Stockfish's `UCI_Elo` scale at a fast time control. Use them to
+compare versions, not as a Lichess or FIDE rating.
+
 ## Project layout
 
 ```
@@ -126,3 +139,7 @@ Point your chess GUI at the `chess-uci` binary as an engine.
 ```sh
 LICHESS_TOKEN=<your-bot-token> ./chess-lichess
 ```
+
+## License
+
+Released under the [MIT License](LICENSE).
